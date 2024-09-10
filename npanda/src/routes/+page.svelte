@@ -206,20 +206,20 @@
             <footer>
                 <p>
                     Crawled database:
-                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/blob/master/nhentaiScrap/manga.7z">Download (82.3 MB, Sqlite3 in LZMA2, 2 GB uncompressed)</a>
+                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/releases/download/dbfiles/manga.7z">Download (82.3 MB, Sqlite3 in LZMA2, 2 GB uncompressed)</a>
                     <br>
                     Database in protobuf format:
-                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/raw/master/HentaiMapGen/galleries.bin.zst">Download (87.1 MB in Zstandard, 600 MB uncompressed)</a>,
+                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/releases/download/dbfiles/galleries.bin.zst">Download (87.1 MB in Zstandard, 600 MB uncompressed)</a>,
                     <a href="https://github.com/npandaarchive/npandaarchive.github.io/raw/master/HentaiMapGen/protobuf.proto">schema</a> (deserialize as <code>NHentai.BookList</code>)
                     <br>
                     Galleries missed by crawler (deleted, etc):
-                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/raw/master/HentaiMapGen/erroredGalleries.json">Download (78.6 KB, JSON)</a>
+                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/releases/download/dbfiles/erroredGalleries.json">Download (78.6 KB, JSON)</a>
                     <br>
                     NHentai galleries matched to ExHentai galleries:
-                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/raw/master/HentaiMapGen/nhentaiMapping.json">Download (32.3 MB, JSON)</a>
+                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/releases/download/dbfiles/nhentaiMapping.json">Download (32.3 MB, JSON)</a>
                     <br>
                     NHentai galleries that could not be matched to ExHentai galleries:
-                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/blob/master/HentaiMapGen/naGalleries.json">Download (8.81 MB, JSON)</a>
+                    <a href="https://github.com/npandaarchive/npandaarchive.github.io/releases/download/dbfiles/naGalleries.json">Download (8.81 MB, JSON)</a>
                 </p>
                 <p>
                     <a href="https://github.com/npandaarchive/npandaarchive.github.io">Crawler, website, everything else source code</a>
