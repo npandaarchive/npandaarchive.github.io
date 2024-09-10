@@ -1,0 +1,5 @@
+Hello. So after a reddit post I thought it'd be an easyish project. At first I was just going to get the title and id(so contextual "hahaha muh 5927421").... but the api provides everything so why not just gather all of it? Mistake. Though after rambling with a few people over DB design and type. We ended up talking of going to nosql or maybe a graph database over sqlite. Started talking about document store.
+
+If we're going to just design something to hold json-like data... why not just give you the json files and you can design or use the data how ever you feel like.
+
+So sorry for the lack of meta data but at the same time... have all the *raw* metadata :p
