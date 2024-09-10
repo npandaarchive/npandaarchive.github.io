@@ -38,3 +38,9 @@ manga.db
 /nhentaiScrap/errors.txt
 /nhentaiScrap/lastEntryScraped333840.txt
 /HentaiMapGen/temp.proto
+/HentaiMapGen/galleries.bin.zst
+/HentaiMapGen/naGalleries.json
+/HentaiMapGen/nhentaiMapping.json
+/HentaiMapGen/sadPandaNameHashes.json.zst
+/nhentaiScrap/manga.7z
+/HentaiMapGen/erroredGalleries.json
