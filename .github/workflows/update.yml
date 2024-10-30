@@ -129,7 +129,7 @@ jobs:
 
         # Arguments for the git pull command. By default, the action does not pull.
         # Default: ''
-        pull: '--rebase'
+        pull: '--rebase --auto-stash'
 
     - name: trigger svelte workflow
       if: ${{ steps.add-and-commit.outputs.committed == 'true' }}
