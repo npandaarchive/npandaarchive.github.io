@@ -50,7 +50,7 @@ jobs:
 
         # restore
         pnpx tsx ./npanda-actions/load.ts data.tzst
-        /usr/bin/tar -xf data.tzst -P -C "$rootDir" --use-compress-program unzstd
+        /usr/bin/tar -xf data.tzst -P -C "$rootDir" --use-compress-program "unzstd --long=30"
         rm -rf data.tzst
 
         dotnet run NHentaiScrapeV2 "$dataDir"
@@ -58,7 +58,7 @@ jobs:
         dotnet run MassageForWeb "$dataDir" "$rootDir/npanda/static/data"
 
         # save
-        /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$rootDir" "Data" --use-compress-program zstdmt
+        /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$rootDir" "Data" --use-compress-program "zstdmt --long=30"
         pnpx tsx ./npanda-actions/save.ts data.tzst
       env:
         GITHUB_TOKEN: ${{ github.token }}
