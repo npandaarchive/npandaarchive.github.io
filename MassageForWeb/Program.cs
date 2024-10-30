@@ -2,78 +2,58 @@
 
 // Mapping of NHentai ID -> SadPanda Gallery ID and Token
 
+using System.IO.Pipelines;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Google.Protobuf;
-using HentaiMapGen;
-using HentaiMapGen.Proto;
+using HentaiMapGenLib;
+using MemoryPack;
+using MemoryPack.Streaming;
 using Microsoft.Collections.Extensions;
-using ZstdSharp;
+using ZstdNet;
 
-var jsonOpts = new JsonSerializerOptions
-{
-    Converters =
-    {
-        new DictionarySlimConverterFactory(),
-    },
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
-};
+var nHentaiSerializer = Json.NHentaiSerializer.Default;
 
-var nhentaiMapping = new DictionarySlim<uint, SadPandaUrlParts>();
-
-// Mapping of NHentai ID -> NHentai Title, for when no match was found
-var naGalleries = new DictionarySlim<uint, Title>();
-
-// Galleries that returned an error (probably removed by NHentai) and were not matched in removed_galleries.json
-var erroredGalleries = new List<uint>();
-
-Console.WriteLine("Deserializing");
-const string root = "../../..";
-using (var stream = File.OpenRead($"{root}/../HentaiMapGen/nhentaiMapping.json"))
-{
-    nhentaiMapping = JsonSerializer.Deserialize<DictionarySlim<uint, SadPandaUrlParts>>(stream, jsonOpts)!;
-}
-using (var stream = File.OpenRead($"{root}/../HentaiMapGen/naGalleries.json"))
-{
-    naGalleries = JsonSerializer.Deserialize<DictionarySlim<uint, Title>>(stream, jsonOpts)!;
-}
-using (var stream = File.OpenRead($"{root}/../HentaiMapGen/erroredGalleries.json"))
-{
-    erroredGalleries = JsonSerializer.Deserialize<List<uint>>(stream, jsonOpts)!;
-}
-Console.WriteLine("Deserialized");
+var dataFolder = args[0];
+var outputFolder = $@"{args[0]}\Output";
+var webOutputFolder = $@"{args[1]}";
 
 {
     Console.WriteLine("Loading BookMaps");
     // BookMap keyed by ID % 1024
-    var maps = new DictionarySlim<ushort, List<NHentai.Types.BookOrError>>();
+    var maps = new DictionarySlim<ushort, List<Json.Book>>();
 
-    using (var stream = new DecompressionStream(File.OpenRead($"{root}/../HentaiMapGen/galleries.bin.zst"), leaveOpen: false))
+    await using (var fs = File.OpenRead($"{outputFolder}/galleries.mpack"))
+    // await using (var stream = new DecompressionStream(fs))
     {
-        var bookList = NHentai.Types.BookList.Parser.ParseFrom(stream);
-        Console.WriteLine(bookList.Books.Count);
-        foreach (var bookOrError in bookList.Books)
+        var books = MemoryPackStreamingSerializer.DeserializeAsync<Json.Book>(fs);
+
+        await foreach (var book in books)
         {
-            ref var r = ref maps.GetOrAddValueRef((ushort)(bookOrError.Id % 1024));
-            if (r == null) r = [bookOrError];
-            else r.Add(bookOrError);
+            Console.WriteLine(book.Id);
+
+            ref var r = ref maps.GetOrAddValueRef((ushort)(book!.Id! % 1024));
+            if (r == null) r = [book];
+            else r.Add(book);
         }
     }
 
     Console.WriteLine("Loaded BookMaps");
 
     Console.WriteLine("Serializing BookMaps");
-    Directory.CreateDirectory($"{root}/data/galleries");
+    Directory.CreateDirectory($"{webOutputFolder}/galleries");
     foreach (var (key, value) in maps)
     {
         Console.WriteLine($"{key}");
-        var bookMap = new NHentai.Types.BookMap();
+        var bookMap = new Dictionary<uint, Json.Book>();
         foreach (var bookOrError in value)
         {
-            bookMap.Books.Add(bookOrError.Id, bookOrError);
+            bookMap[bookOrError.Id!.Value] = bookOrError;
         }
-        using var stream = new CompressionStream(File.Create($"{root}/data/galleries/{key}.bin.zst"), 19, leaveOpen: false);
-        bookMap.WriteTo(stream);
+
+        await using var fs = File.Create($"{webOutputFolder}/galleries/{key}.mpack.zst");
+        await using var stream = new CompressionStream(File.Create($"{webOutputFolder}/galleries/{key}.mpack.zst"), new CompressionOptions(19));
+        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), bookMap);
     }
     Console.WriteLine("Serialized BookMaps");
 }
@@ -82,45 +62,53 @@ GC.Collect(2, GCCollectionMode.Aggressive, true, true);
 
 {
     Console.WriteLine("Serializing NHentaiMapping");
-    var nhentaiMapping2 = new NHentaiMapping();
-    foreach (var (key, value) in nhentaiMapping)
-    {
-        nhentaiMapping2.Mapping.Add(key, new NHentaiMapping.Types.SadPandaUrlParts()
-        {
-            Gid = value.Gid,
-            Token = value.Token,
-        });
-    }
     
-    using var stream = new CompressionStream(File.Create($"{root}/data/mappings.bin.zst"), 19, leaveOpen: false);
-    nhentaiMapping2.WriteTo(stream);
-    Console.WriteLine("Serialized NHentaiMapping");
+    Dictionary<uint, Json.SadPandaIdToken> nhentaiMapping;
+    await using (var stream = File.OpenRead($"{outputFolder}/nhentaiMapping.json"))
+    {
+        nhentaiMapping = JsonSerializer.Deserialize<Dictionary<uint, Json.SadPandaIdToken>>(stream)!;
+    }
+
+    await using (var fileStream = File.Create($"{webOutputFolder}/mappings.mpack.zst"))
+    await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
+    {
+        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), nhentaiMapping);
+        Console.WriteLine("Serialized NHentaiMapping");
+    }
 }
 
 {
     Console.WriteLine("Serializing UnmatchedGalleries");
-    var naGallery2 = new NHentaiMapping.Types.UnmatchedGalleries();
-    foreach (var (key, (english, japanese, pretty)) in naGalleries)
-    {
-        naGallery2.Mapping.Add(key, new NHentai.Types.Title()
-        {
-            English = english ?? "",
-            Japanese = japanese ?? "",
-            Pretty = pretty ?? "",
-        });
-    }
     
-    using var stream = new CompressionStream(File.Create($"{root}/data/unmatched.bin.zst"), 19, leaveOpen: false);
-    naGallery2.WriteTo(stream);
-    Console.WriteLine("Serialized UnmatchedGalleries");
+    // Mapping of NHentai ID -> NHentai Title, for when no match was found
+    Dictionary<uint, Json.Title> naGalleries;
+    await using (var stream = File.OpenRead($"{outputFolder}/naGalleries.json"))
+    {
+        naGalleries = JsonSerializer.Deserialize<Dictionary<uint, Json.Title>>(stream)!;
+    }
+
+    await using (var fileStream = File.Create($"{webOutputFolder}/unmatched.mpack.zst"))
+    await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
+    {
+        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), naGalleries);
+        Console.WriteLine("Serialized UnmatchedGalleries");
+    }
 }
 
 {
     Console.WriteLine("Serializing ErroredGalleries");
-    var erroredGalleries2 = new NHentaiMapping.Types.ErroredGalleries();
-    erroredGalleries2.Ids.AddRange(erroredGalleries);
-    
-    using var stream = new CompressionStream(File.Create($"{root}/data/errored.bin.zst"), 19, leaveOpen: false);
-    erroredGalleries2.WriteTo(stream);
-    Console.WriteLine("Serialized ErroredGalleries");
+
+    // Galleries that returned an error (probably removed by NHentai) and were not matched in removed_galleries.json
+    List<uint> erroredGalleries;
+    await using (var stream = File.OpenRead($"{outputFolder}/erroredGalleries.json"))
+    {
+        erroredGalleries = JsonSerializer.Deserialize<List<uint>>(stream)!;
+    }
+
+    await using (var fileStream = File.Create($"{webOutputFolder}/errored.mpack.zst"))
+    await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
+    {
+        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), erroredGalleries);
+        Console.WriteLine("Serialized ErroredGalleries");
+    }
 }

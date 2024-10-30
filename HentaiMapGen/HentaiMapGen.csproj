@@ -5,16 +5,19 @@
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Google.Protobuf" Version="3.28.0" />
-      <PackageReference Include="linq2db" Version="6.0.0-preview.1" />
-      <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0-preview.7.24405.3" />
+      <PackageReference Include="Google.Protobuf" Version="3.28.1" />
       <PackageReference Include="Microsoft.Experimental.Collections" Version="1.0.6-e190117-3" />
       <PackageReference Include="MinHashSharp" Version="1.1.1" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.0-preview.7.24405.7" />
-      <PackageReference Include="ZstdSharp.Port" Version="0.8.1" />
+      <PackageReference Include="System.IO.Hashing" Version="9.0.0-rc.1.24431.7" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\HentaiMapGenLib\HentaiMapGenLib.csproj" />
     </ItemGroup>
 
 </Project>

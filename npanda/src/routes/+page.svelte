@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { type NHentaiMapping_ErroredGalleries, type NHentaiMapping, type NHentaiMapping_UnmatchedGalleries, type NHentai_Book, NHentai_PageType, } from '$lib/protobuf';
     import type { Api } from '$lib/worker/worker';
     import { wrap } from 'comlink';
     import { Badge, Button, Col, Container, Input, InputGroup, InputGroupText, Label, Row, Spinner, Card } from "@sveltestrap/sveltestrap";
@@ -7,6 +6,8 @@
     import dayjs from 'dayjs';
     import relativeTime from 'dayjs/plugin/relativeTime';
     import { base } from '$app/paths';
+    import type { Book } from '$lib/memorypack/models/Book';
+    import { ImageType } from '$lib/memorypack/models/ImageType';
 
     const worker = wrap<Api>(
         new Worker(new URL("$lib/worker/worker.ts", import.meta.url), {
@@ -14,9 +15,9 @@
         }),
     ) as Api;
 
-    // const errored = worker.getProto(`${base}/data/errored.bin.zst`, 'NHentaiMapping_ErroredGalleries');
-    const mappings = worker.getProto(`${base}/data/mappings.bin.zst`, 'NHentaiMapping');
-    const unmatched = worker.getProto(`${base}/data/unmatched.bin.zst`, 'NHentaiMapping_UnmatchedGalleries');
+    // const errored = worker.getProto(`${base}/data/errored.mpack.zst`, 'ErroredGalleries');
+    const mappings = worker.getMPack(`${base}/data/mappings.mpack.zst`, 'NHentaiMapping');
+    const unmatched = worker.getMPack(`${base}/data/unmatched.mpack.zst`, 'NaGalleries');
 
     function tokenToHex(token: bigint): string {
         return token.toString(16).padStart(10, '0');
@@ -24,7 +25,7 @@
 
     interface MatchResult {
         status: 'panda' | 'no-panda' | 'errored' | 'invalid-gallery' | 'not-started' | 'waiting',
-        nhentaiGallery?: NHentai_Book,
+        nhentaiGallery?: Book,
         nhentaiError?: string,
         sadpandaId?: [gid: number, token: bigint];
         sadpandaGallery?: IGMetadata | IGError,
@@ -35,26 +36,26 @@
             // errored,
             mappings,
             unmatched,
-            worker.getProto(`${base}/data/galleries/${nhId % 1024}.bin.zst`, 'NHentai_BookMap')
+            worker.getMPack(`${base}/data/galleries/${nhId % 1024}.bin.zst`, 'BookMap')
         ]);
 
         console.log(amappings, aunmatched, ngalleries);
 
         const result: MatchResult = {status: 'invalid-gallery'};
 
-        if (nhId in ngalleries.books) {
-            const bookOrError = ngalleries.books[nhId];
+        if (ngalleries.has(nhId)) {
+            const bookOrError = ngalleries.get(nhId)!;
             if (bookOrError.error) {
                 result.nhentaiError = bookOrError.error;
                 result.status = 'errored';
             } else {
-                result.nhentaiGallery = bookOrError.book;
+                result.nhentaiGallery = bookOrError;
             }
         }
 
-        if (nhId in amappings.mapping) {
-            const gid = amappings.mapping[nhId].Gid;
-            const token = amappings.mapping[nhId].Token;
+        if (amappings.has(nhId)) {
+            const { gid, token } = amappings.get(nhId)!;
+
             result.sadpandaId = [gid, token];
 
             const response: IGDataRes = await fetch('https://api.e-hentai.org/api.php', {
@@ -71,7 +72,7 @@
 
             result.sadpandaGallery = response?.gmetadata?.[0];
             result.status = 'panda';
-        } else if (nhId in aunmatched.mapping) {
+        } else if (aunmatched.has(nhId)) {
             result.status = 'no-panda';
         }
 
@@ -98,14 +99,14 @@
         }
     }, 1000);
 
-    function fileType(type: NHentai_PageType) {
+    function fileType(type: ImageType) {
         switch (type) {
-            case NHentai_PageType.JPG: return 'jpg';
-            case NHentai_PageType.PNG: return 'png';
-            case NHentai_PageType.GIF: return 'gif';
-            case NHentai_PageType.INVALID1: return 'jpg';
-            case NHentai_PageType.INVALID2: return 'png';
-            case NHentai_PageType.INVALID3: return 'gif';
+            case ImageType.Jpg: return 'jpg';
+            case ImageType.Png: return 'png';
+            case ImageType.Gif: return 'gif';
+            case ImageType.Invalid1: return 'jpg';
+            case ImageType.Invalid2: return 'png';
+            case ImageType.Invalid3: return 'gif';
         }
     }
 
@@ -258,17 +259,17 @@
                                 {/if}
                             </p>
 
-                            {#each groupBy(nGallery.tags, e => e.type) as group (group.key)}
+                            {#each groupBy(nGallery.tags ?? [], e => e.type) as group (group.key)}
                                 <p><b>{String(group.key)[0].toUpperCase()}{String(group.key).slice(1)}:</b>
-                                    {#each group.members as tag (tag.id)}
-                                    <a href="https://nhentai.net{tag.url}"><Badge color="secondary" pill={true}>{tag.name} ({tag.count})</Badge></a>
+                                    {#each group.members as tag (tag?.id)}
+                                    <a href="https://nhentai.net{tag?.url}"><Badge color="secondary" pill={true}>{tag?.name} ({tag?.count})</Badge></a>
                                     {/each}
                                 </p>
                             {/each}
 
                             {#if nGallery.images}
                             <p>
-                                <b>Pages:</b> <Badge color="secondary" pill={true}>{nGallery.images?.pages.length}</Badge>
+                                <b>Pages:</b> <Badge color="secondary" pill={true}>{nGallery.images?.pages?.length}</Badge>
                             </p>
                             {/if}
 

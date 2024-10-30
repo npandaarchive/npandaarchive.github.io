@@ -1,0 +1,68 @@
+﻿syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package HentaiMapGenLib.Models.Proto;
+option csharp_namespace = "HentaiMapGenLib.Models.Proto";
+
+message Title {
+  optional string english = 1;
+  optional string japanese = 2;
+  optional string pretty = 3;
+}
+
+enum PageType {
+  JPG = 0;
+  PNG = 1;
+  GIF = 2;
+  INVALID1 = 3;
+  INVALID2 = 4;
+  INVALID3 = 5;
+}
+
+message Page {
+  PageType type = 1; // t
+  uint32 width = 2; // w
+  uint32 height = 3; // h
+}
+
+message Images {
+  repeated Page pages = 1;
+  Page cover = 2;
+  Page thumbnail = 3;
+}
+
+message Tag {
+  uint32 id = 1;
+  string type = 2;
+  string name = 3;
+  string url = 4;
+  uint32 count = 5;
+}
+
+message Book {
+  uint32 media_id = 2;
+  Title title = 3;
+  Images images = 4;
+  string scanlator = 5;
+  google.protobuf.Timestamp upload_date = 6;
+  repeated Tag tags = 7;
+  uint32 num_pages = 8;
+  uint32 num_favorites = 9;
+}
+
+message BookOrError {
+  uint32 id = 1;
+  oneof BookOrError {
+    string error = 2;
+    Book book = 3;
+  }
+}
+
+message BookList {
+  repeated BookOrError books = 1;
+}
+
+message BookMap {
+  map<uint32, BookOrError> books = 1;
+}

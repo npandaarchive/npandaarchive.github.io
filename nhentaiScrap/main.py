@@ -9,13 +9,14 @@ import sqlite3
 from sqlitedict import SqliteDict
 import msgpack
 import lz4.frame
+import sys
 
 sleep = 0
 error = 0
 
 def my_encode(obj):
     #return sqlite3.Binary(lz4.frame.compress(msgpack.packb(obj)))
-    return 'json:' + json.dumps(obj)
+    return json.dumps(obj)
 
 def my_decode(obj: str):
     #return msgpack.unpackb(lz4.frame.decompress(bytes(obj)))
@@ -26,10 +27,10 @@ def my_decode(obj: str):
 # 334261 to 342159
 # (528626 - 334261) / 2632 = 73.8468844985
 with (
-    SqliteDict("manga.db", autocommit=True, encode=my_encode, decode=my_decode) as db,
+    SqliteDict(sys.argv[1], autocommit=True, encode=my_encode, decode=my_decode, tablename="galleries_kv") as db,
     open("errors.txt", 'a') as fe
 ):
-    for i in range(528626, 529270+1):
+    for i in range(528626, 530360+1):
         if str(i) in db:
             print(f'{i} skipped')
             continue

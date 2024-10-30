@@ -44,3 +44,21 @@ manga.db
 /HentaiMapGen/sadPandaNameHashes.json.zst
 /nhentaiScrap/manga.7z
 /HentaiMapGen/erroredGalleries.json
+/npanda.code-workspace
+/Data/Data.7z
+/Data/manga - Copy.db
+/Data/manga.7z
+/Data/new_manga.db
+/Data_backup
+/Data/manga.db-shm
+/Data/manga.db-wal
+/Data/new_manga.db-shm
+/Data/new_manga.db-wal
+/Data/Output/erroredGalleries.json
+/Data/Output/galleries.bin.zst
+/Data/Output/galleries.mpack
+/Data/Output/galleries.mpack.zst
+/Data/Output/naGalleries.json
+/Data/Output/nhentaiMapping.json
+/Data/removed_galleries.json
+/Data/sadPandaNameHashes.mpack.zst

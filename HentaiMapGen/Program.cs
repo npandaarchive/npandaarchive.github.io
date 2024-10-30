@@ -1,343 +1,769 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Collections;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.IO.Hashing;
+using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using DataModel;
-using Google.Protobuf;
-using HentaiMapGen;
-using HentaiMapGen.Proto;
-using LinqToDB;
-using LinqToDB.Common;
+using CommunityToolkit.HighPerformance.Buffers;
+using HentaiMapGenLib.Models;
+using HentaiMapGenLib.Models.Json;
+using MemoryPack;
+using MemoryPack.Streaming;
 using Microsoft.Collections.Extensions;
-using Microsoft.Data.Sqlite;
-using ZstdSharp;
+using SQLite;
+using ZstdNet;
 
-Console.WriteLine("Hello, World!");
-var jsonOpts = new JsonSerializerOptions
+namespace HentaiMapGen;
+
+internal static partial class Program
 {
-    Converters =
+    private class MemoryPackStreamingWriter<T, TWriter>(
+        TWriter writer,
+        MemoryPackWriterOptionalState state,
+        int flushRate
+    ) : IAsyncDisposable
+        where TWriter : IBufferWriter<byte>
     {
-        new DictionarySlimConverterFactory(),
-    },
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
-};
+        private TWriter _writer = writer;
+        private long _unflushedCount;
 
-Dictionary<uint, DeletedGallery> deletedGalleries;
-await using (var stream = File.OpenRead(@"..\..\..\..\removed_galleries.json"))
-{
-    deletedGalleries = JsonSerializer.Deserialize<DeletedGallery[]>(stream)!
-        .ToDictionary(e => e.Code);
-}
-
-Console.WriteLine("Loaded deletedGalleries");
-
-await using var pandaDb = new SadPandaDb(
-    new DataOptions<SadPandaDb>(new DataOptions()
-        .UseSQLite($@"Data Source={args[0]}")));
-
-#region Create sadPandaNameHashes
-
-DictionarySlim<ulong, SadPandaUrlParts> sadPandaNameHashes;
-if (!File.Exists("../../../sadPandaNameHashes.json.zst"))
-{
-    sadPandaNameHashes = new DictionarySlim<ulong, SadPandaUrlParts>();
-    var sw0 = Stopwatch.GetTimestamp();
-
-    foreach (var e in pandaDb.Galleries.Select(e => new { e.Title, e.TitleJpn, e.Gid, e.Token }))
-    {
-        var urlParts = SadPandaUrlParts.Parse(e.Gid, e.Token!);
-
-        if (e.Title != null)
+        public async ValueTask AppendAsync(T value, CancellationToken cancellationToken = default)
         {
-            sadPandaNameHashes.GetOrAddValueRef(Hash(Normalize(e.Title))) = urlParts;
-            sadPandaNameHashes.GetOrAddValueRef(Hash(Normalize(Cleanup(e.Title)))) = urlParts;
+            var writer = new MemoryPackWriter<TWriter>(ref _writer, state);
+            writer.WriteValue(value);
+
+            _unflushedCount += writer.WrittenCount;
+            writer.Flush();
+
+            if (_writer is PipeWriter pipeWriter && _unflushedCount >= flushRate)
+            {
+                _unflushedCount = 0;
+                await pipeWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        if (e.TitleJpn != null)
+        public async ValueTask DisposeAsync()
         {
-            sadPandaNameHashes.GetOrAddValueRef(Hash(Normalize(e.TitleJpn))) = urlParts;
-            sadPandaNameHashes.GetOrAddValueRef(Hash(Normalize(Cleanup(e.TitleJpn)))) = urlParts;
+            if (_writer is PipeWriter pipeWriter)
+                await pipeWriter.FlushAsync().ConfigureAwait(false);
+            ((IDisposable)state).Dispose();
         }
     }
-
-    Console.WriteLine($"Created sadPandaNameHashes in {Stopwatch.GetElapsedTime(sw0)}. Total {sadPandaNameHashes.Count} sadpanda name hashes.");
-
-    await using var stream = new CompressionStream(File.Create("../../../sadPandaNameHashes.json.zst"), 19, leaveOpen: false);
-    await JsonSerializer.SerializeAsync(stream, sadPandaNameHashes, jsonOpts);
-}
-else
-{
-    await using var stream = new DecompressionStream(File.OpenRead("../../../sadPandaNameHashes.json.zst"), leaveOpen: false);
-    sadPandaNameHashes = (await JsonSerializer.DeserializeAsync<DictionarySlim<ulong, SadPandaUrlParts>>(stream, jsonOpts))!;
-
-    Console.WriteLine("Loaded sadPandaNameHashes from cache");
-}
-
-#endregion
-
-// linq2db shits itself at attempting to parse the manga.db because of sqlite's lack of type checking since the value
-// column contains strings typed as BLOB
-await using var nhentaiDb = new SqliteConnection($@"Data Source={args[1]}");
-await nhentaiDb.OpenAsync();
-
-await using var protobufOutput = new CompressionStream(File.Create("../../../galleries.bin.zst"), 15, leaveOpen: false);
-
-var protobufTotal = TimeSpan.Zero;
-var mappingTotal = TimeSpan.Zero;
-var newDbTotal = TimeSpan.Zero;
-
-// Mapping of NHentai ID -> SadPanda Gallery ID and Token
-var nhentaiMapping = new DictionarySlim<uint, SadPandaUrlParts>();
-
-// Mapping of NHentai ID -> NHentai Title, for when no match was found
-var naGalleries = new DictionarySlim<uint, Title>();
-
-// Galleries that returned an error (probably removed by NHentai) and were not matched in removed_galleries.json
-var erroredGalleries = new List<uint>();
-
-var sw4 = Stopwatch.GetTimestamp();
-await using (var command = nhentaiDb.CreateCommand())
-{
-    command.CommandText = "SELECT key, value FROM unnamed";
-
-    await using var reader = await command.ExecuteReaderAsync();
-    var i = 0;
-    while (await reader.ReadAsync())
-    {
-        var galleryId = uint.Parse(reader.GetString(0));
-        var value = reader.GetString(1);
-
-        try
-        {
-            if (i++ % 1000 == 0) Console.WriteLine($"{i}");
-
-            var nGallery = JsonSerializer.Deserialize<Book>(value.AsSpan().RemovePrefix("json:"));
-
-            var sw1 = Stopwatch.GetTimestamp();
-            #region Write protobuf
-            var bookList = new NHentai.Types.BookList();
-            bookList.Books.Add(nGallery.ToProtobuf(galleryId));
-            bookList.WriteTo(protobufOutput);
-            #endregion
-            protobufTotal += Stopwatch.GetElapsedTime(sw1);
-
-            SadPandaUrlParts pandaId = default;
-            DeletedGallery deletedGallery = default;
-
-            var sw2 = Stopwatch.GetTimestamp();
-            #region Map Nhentai to sadpanda
-            bool TryMatchAnyHash(ReadOnlySpan<string?> candidates, out SadPandaUrlParts parts)
-            {
-                foreach (var candidate in candidates)
-                {
-                    if (candidate == null) continue;
-
-                    if (sadPandaNameHashes.TryGetValue(Hash(Normalize(candidate)), out parts)) return true;
-                    if (sadPandaNameHashes.TryGetValue(Hash(Normalize(Cleanup(candidate))), out parts)) return true;
-                    if (sadPandaNameHashes.TryGetValue(Hash(Normalize(ReplaceRoman(Cleanup(candidate)))), out parts)) return true;
-                }
-
-                parts = default;
-                return false;
-            }
-
-            static bool CheckForAnyMatch(Gallery pGallery, ReadOnlySpan<string?> candidates)
-            {
-                var normTitle = pGallery.Title != null ? Normalize(pGallery.Title) : null;
-                var cleanedNormTitle = pGallery.Title != null ? Normalize(Cleanup(pGallery.Title)) : null;
-                var cleanedNormTitleRoman = pGallery.Title != null ? Normalize(ReplaceRoman(Cleanup(pGallery.Title))) : null;
-
-                var normTitleJpn = pGallery.TitleJpn != null ? Normalize(pGallery.TitleJpn) : null;
-                var cleanedNormTitleJpn = pGallery.TitleJpn != null ? Normalize(Cleanup(pGallery.TitleJpn)) : null;
-                var cleanedNormTitleRomanJpn = pGallery.TitleJpn != null ? Normalize(ReplaceRoman(Cleanup(pGallery.TitleJpn))) : null;
-                
-                foreach (var candidate in candidates)
-                {
-                    if (candidate == null) continue;
-
-                    var normCandidate = Normalize(candidate);
-                    var cleanedNormCandidate = Normalize(Cleanup(candidate));
-                    var cleanedNormRomanCandidate = Normalize(ReplaceRoman(Cleanup(candidate)));
-
-                    if (normTitle != null && normCandidate.SequenceEqual(normTitle)) return true;
-                    if (normTitleJpn != null && normCandidate.SequenceEqual(normTitleJpn)) return true;
-                    if (cleanedNormTitle != null && cleanedNormCandidate.SequenceEqual(cleanedNormTitle)) return true;
-                    if (cleanedNormTitleJpn != null && cleanedNormCandidate.SequenceEqual(cleanedNormTitleJpn)) return true;
-                    if (cleanedNormTitleRoman != null && cleanedNormRomanCandidate.SequenceEqual(cleanedNormTitleRoman)) return true;
-                    if (cleanedNormTitleRomanJpn != null && cleanedNormRomanCandidate.SequenceEqual(cleanedNormTitleJpn)) return true;
-                }
-
-                return false;
-            }
-
-            if (nGallery.Error != null)
-            {
-                if (!deletedGalleries.TryGetValue(galleryId, out deletedGallery))
-                {
-                    erroredGalleries.Add(galleryId);
-                    continue;
-                }
-
-                if (TryMatchAnyHash([deletedGallery.FullTitle, deletedGallery.Title], out pandaId))
-                {
-                    var gid = pandaId.Gid;
-                    var pGallery = pandaDb.Galleries.FirstOrDefault(e => e.Gid == gid)!;
-                    if (!CheckForAnyMatch(pGallery, [deletedGallery.FullTitle, deletedGallery.Title]))
-                    {
-                        throw new InvalidOperationException(
-                            $"Hash collision! {pGallery.Title} vs {deletedGallery.Title}");
-                    }
-
-                    // var token = pandaId.TokenHex;
-                    // Console.WriteLine($"{deletedGallery.Title}: https://exhentai.org/g/{gid}/{token}/");
-
-                    nhentaiMapping.GetOrAddValueRef(galleryId) = pandaId;
-                }
-                else
-                {
-                    Console.WriteLine($"{deletedGallery.Title}: N/A");
-                    naGalleries.GetOrAddValueRef(galleryId) =
-                        new Title(deletedGallery.FullTitle, null, deletedGallery.Title);
-                }
-            }
-            else
-            {
-                if (TryMatchAnyHash([nGallery.Title.English, nGallery.Title.Japanese, nGallery.Title.Pretty], out pandaId))
-                {
-                    var gid = pandaId.Gid;
-                    var pGallery = pandaDb.Galleries.Find(gid)!;
-                    if (!CheckForAnyMatch(pGallery,[nGallery.Title.English, nGallery.Title.Japanese, nGallery.Title.Pretty]))
-                    {
-                        throw new InvalidOperationException(
-                            $"Hash collision! {pGallery.Title} vs {nGallery.Title.English}");
-                    }
-
-                    // var token = pandaId.TokenHex;
-                    // Console.WriteLine($"{nGallery.Title.Pretty}: https://exhentai.org/g/{gid}/{token}/");
-
-                    nhentaiMapping.GetOrAddValueRef(galleryId) = pandaId;
-                }
-                else
-                {
-                    Console.WriteLine($"{nGallery.Title.Pretty}: N/A");
-                    naGalleries.GetOrAddValueRef(galleryId) = nGallery.Title;
-                }
-            }
-            #endregion
-            mappingTotal += Stopwatch.GetElapsedTime(sw2);
-        }
-        catch (Exception)
-        {
-            Console.WriteLine($"ERRORED when processing gallery {galleryId}: {value}");
-            throw;
-        }
-    }
-}
-
-Console.WriteLine($"Total time: {Stopwatch.GetElapsedTime(sw4)}");
-Console.WriteLine($"Protobuf took {protobufTotal}");
-Console.WriteLine($"Mapping nhentai->panda took {mappingTotal}");
-Console.WriteLine($"Creating new DB schema took {newDbTotal}");
-Console.WriteLine($"Found NHentai->Panda mappings: {nhentaiMapping.Count}");
-Console.WriteLine($"Not found NHentai->Panda mappings: {naGalleries.Count}");
-Console.WriteLine($"Errored (deleted, etc...) NHentai galleries: {erroredGalleries.Count}");
-
-await using (var stream = File.Create("../../../nhentaiMapping.json"))
-{
-    await JsonSerializer.SerializeAsync(stream, nhentaiMapping, jsonOpts);
-}
-await using (var stream = File.Create("../../../naGalleries.json"))
-{
-    await JsonSerializer.SerializeAsync(stream, naGalleries, jsonOpts);
-}
-await using (var stream = File.Create("../../../erroredGalleries.json"))
-{
-    await JsonSerializer.SerializeAsync(stream, erroredGalleries, jsonOpts);
-}
-return;
-
-static ReadOnlySpan<char> Normalize(string str)
-    => str.ToLowerInvariant().Normalize(NormalizationForm.FormD).AsSpan().Trim();
-
-static ulong Hash(ReadOnlySpan<char> str)
-    => XxHash3.HashToUInt64(MemoryMarshal.Cast<char, byte>(str));
-
-static string Cleanup(string str)
-    => PunctuationEtcRegex().Replace(str, "");
-
-static string ReplaceRoman(string str)
-    => NumberRegex().Replace(str, static e => ToRoman(e.ValueSpan));
-
-static string ToRoman(ReadOnlySpan<char> str)
-{
-    var number = long.Parse(str.TrimStart('0') is var v and not [] ? v : ['0']);
     
-    if (number >= 4000) return new string(str);
-    if (number < 1) return string.Empty;
-
-    Span<char> temp = stackalloc char["MMMCMXCIX".Length];
-    var sb = new DefaultInterpolatedStringHandler(0, 0, null, temp);
-
-    while (number >= 1)
+    private static MemoryPackStreamingWriter<T, TWriter> IncrementalSerialize<T, TWriter>(TWriter writer, int count, int flushRate = 4096, MemoryPackSerializerOptions? options = default)
+        where TWriter : IBufferWriter<byte>
     {
+        var state = MemoryPackWriterOptionalStatePool.Rent(options);
+
+        WriteCollectionHeader(ref writer, count, state);
+
+        return new MemoryPackStreamingWriter<T, TWriter>(writer, state, flushRate);
+
+        static void WriteCollectionHeader(ref TWriter awriter, int count, MemoryPackWriterOptionalState state)
+        {
+            var writer = new MemoryPackWriter<TWriter>(ref awriter, state);
+            writer.WriteCollectionHeader(count);
+            writer.Flush();
+        }
+    }
+    
+    public static async Task Main(string[] args)
+    {
+        Console.WriteLine("Hello, World!");
+        
+        var nHentaiSerializer = NHentaiSerializer.Default;
+        
+        var dataFolder = args[1];
+        var outputFolder = $@"{args[1]}\Output";
+
+        #region Load deletedGalleries
+        
+        Dictionary<uint, DeletedGallery> deletedGalleries;
+        await using (var stream = File.OpenRead($@"{dataFolder}\removed_galleries.json"))
+        {
+            deletedGalleries = JsonSerializer.Deserialize(stream, nHentaiSerializer.DeletedGalleryArray)!
+                .ToDictionary(e => e.Id);
+        }
+
+        Console.WriteLine("Loaded deletedGalleries");
+        
+        #endregion
+
+        using var sadPandaNameMapping = await SadPandaNameMapping.LoadAsync(args[0], dataFolder);
+
+        using var nhentaiDb = new SQLiteConnection($@"{dataFolder}\manga.db", SQLiteOpenFlags.ReadOnly);
+
+        var mpackTotal = TimeSpan.Zero;
+        var mappingTotal = TimeSpan.Zero;
+
+        var galleries = new List<Book>();
+
+        // Mapping of NHentai ID -> SadPanda Gallery ID and Token
+        var nhentaiMapping = new DictionarySlim<uint, SadPandaIdToken>();
+
+        // Mapping of NHentai ID -> NHentai Title, for when no match was found
+        var naGalleries = new DictionarySlim<uint, Title>();
+
+        // Galleries that returned an error (probably removed by NHentai) and were not matched in removed_galleries.json
+        var erroredGalleries = new List<uint>();
+
+        var sw0 = Stopwatch.GetTimestamp();
+
+        var i = 0;
+        foreach (var kv in nhentaiDb.Table<NHentaiKeyValue>().Deferred())
+        {
+            var galleryId = uint.Parse(kv.Key);
+            var value = kv.Value;
+
+            try
+            {
+                if (i++ % 1000 == 0)
+                {
+                    Console.WriteLine($"{i}");
+                }
+
+                var nGallery = JsonSerializer.Deserialize<Book>(value.AsSpan().RemovePrefix("json:"))!;
+
+                nGallery = nGallery with
+                {
+                    Id = galleryId,
+                };
+
+                #region Write memorypack
+
+                {
+                    var sw1 = Stopwatch.GetTimestamp();
+                    galleries.Add(nGallery);
+                    mpackTotal += Stopwatch.GetElapsedTime(sw1);
+                }
+
+                #endregion
+
+                #region Map Nhentai to sadpanda
+                
+                var sw2 = Stopwatch.GetTimestamp();
+
+                if (nGallery.Error != null)
+                {
+                    // Handle missing gallery
+                    
+                    if (!deletedGalleries.TryGetValue(galleryId, out var deletedGallery))
+                    {
+                        erroredGalleries.Add(galleryId);
+                        continue;
+                    }
+
+                    if (sadPandaNameMapping.FindMapping([deletedGallery.TitleEnglish, deletedGallery.TitlePretty], out var pGallery))
+                    {
+                        // Console.WriteLine($"{deletedGallery.Title}: https://exhentai.org/g/{pGallery.Gid}/{pGallery.Token}/");
+                        nhentaiMapping.GetOrAddValueRef(galleryId) = new SadPandaIdToken(pGallery.Gid, pGallery.Token!);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"{deletedGallery.TitlePretty}: N/A");
+                        naGalleries.GetOrAddValueRef(galleryId) = new Title(deletedGallery.TitleEnglish, null, deletedGallery.TitlePretty);
+                    }
+                }
+                else
+                {
+                    // Handle present gallery
+
+                    if (sadPandaNameMapping.FindMapping([nGallery.Title.English, nGallery.Title.Japanese, nGallery.Title.Pretty], out var pGallery))
+                    {
+                        // Console.WriteLine($"{nGallery.Title.Pretty}: https://exhentai.org/g/{pGallery.Gid}/{pGallery.Token}/");
+                        nhentaiMapping.GetOrAddValueRef(galleryId) = new SadPandaIdToken(pGallery.Gid, pGallery.Token!);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"{nGallery.Title.Pretty}: N/A");
+                        naGalleries.GetOrAddValueRef(galleryId) = nGallery.Title;
+                    }
+                }
+                
+                mappingTotal += Stopwatch.GetElapsedTime(sw2);
+                
+                #endregion
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"ERRORED when processing gallery {galleryId}: {value}");
+                throw;
+            }
+        }
+
+        // await fileStream.WriteAsync(arrWriter.WrittenMemory);
+
+        Console.WriteLine($"Total time: {Stopwatch.GetElapsedTime(sw0)}");
+        Console.WriteLine($"MemoryPack took {mpackTotal}");
+        Console.WriteLine($"Mapping nhentai->panda took {mappingTotal}");
+        Console.WriteLine($"Found NHentai->Panda mappings: {nhentaiMapping.Count}");
+        Console.WriteLine($"Not found NHentai->Panda mappings: {naGalleries.Count}");
+        Console.WriteLine($"Errored (deleted, etc...) NHentai galleries: {erroredGalleries.Count}");
+
+        await using var fileStream = File.Create($@"{outputFolder}\galleries.mpack");
+        // await using var mpackOutput = new CompressionStream(fileStream, new CompressionOptions(8));
+        await MemoryPackStreamingSerializer.SerializeAsync(fileStream, galleries.Count, galleries);
+
+        await using (var stream = File.Create($"{outputFolder}/nhentaiMapping.json"))
+        {
+            await JsonSerializer.SerializeAsync(stream, nhentaiMapping, NHentaiSerializer.Default.Options);
+        }
+        await using (var stream = File.Create($"{outputFolder}/naGalleries.json"))
+        {
+            await JsonSerializer.SerializeAsync(stream, naGalleries, NHentaiSerializer.Default.Options);
+        }
+        await using (var stream = File.Create($"{outputFolder}/erroredGalleries.json"))
+        {
+            await JsonSerializer.SerializeAsync(stream, erroredGalleries, NHentaiSerializer.Default.Options);
+        }
+    }
+}
+
+internal partial class SadPandaNameMapping(SQLiteConnection sqliteConnection, Dictionary<ulong, SadPandaIdToken> sadPandaNameHashes) : IDisposable
+{
+    private readonly TableQuery<SadPandaGallery> _sadPandaGalleries = sqliteConnection.Table<SadPandaGallery>();
+    
+    public static async Task<SadPandaNameMapping> LoadAsync(string pandaDbLocation, string dataFolder)
+    {
+        var pandaDb = new SQLiteConnection(pandaDbLocation, SQLiteOpenFlags.ReadOnly);
+
+        Dictionary<ulong, SadPandaIdToken> sadPandaNameHashes;
+        if (!File.Exists($@"{dataFolder}\sadPandaNameHashes.mpack.zst"))
+        {
+            sadPandaNameHashes = new Dictionary<ulong, SadPandaIdToken>();
+            var sw = Stopwatch.GetTimestamp();
+
+            foreach (var e in pandaDb.Table<SadPandaGallery>().Deferred())
+            {
+                var urlParts = new SadPandaIdToken(e.Gid, e.Token!);
+
+                if (!string.IsNullOrEmpty(e.Title))
+                {
+                    foreach (var candidate in GetCandidates(e.Title))
+                    {
+                        sadPandaNameHashes.TryAdd(Hash(candidate), urlParts);
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(e.TitleJpn))
+                {
+                    foreach (var candidate in GetCandidates(e.TitleJpn))
+                    {
+                        sadPandaNameHashes.TryAdd(Hash(candidate), urlParts);
+                    }
+                }
+            }
+
+            Console.WriteLine($"Created sadPandaNameHashes in {Stopwatch.GetElapsedTime(sw)}. Total {sadPandaNameHashes.Count} sadpanda name hashes.");
+
+            await using var fileStream = File.Create($@"{dataFolder}\sadPandaNameHashes.mpack.zst");
+            await using var stream = new CompressionStream(fileStream, new CompressionOptions(19));
+            MemoryPackSerializer.Serialize(PipeWriter.Create(stream), sadPandaNameHashes);
+        }
+        else
+        {
+            await using var fileStream = File.OpenRead($@"{dataFolder}\sadPandaNameHashes.mpack.zst");
+            await using var stream = new DecompressionStream(fileStream);
+            sadPandaNameHashes = (await MemoryPackSerializer.DeserializeAsync<Dictionary<ulong, SadPandaIdToken>>(stream))!;
+
+            Console.WriteLine("Loaded sadPandaNameHashes from cache");
+        }
+
+        return new SadPandaNameMapping(pandaDb, sadPandaNameHashes);
+    }
+
+    private static CandidatesEnumerator GetCandidates(string str) => new(str);
+    private struct CandidatesEnumerator(string str)
+    {
+        private int _index = -1;
+
+        public bool MoveNext()
+        {
+            _index++;
+            return _index < 3;
+        }
+
+        public readonly ReadOnlySpan<char> Current => _index switch
+        {
+            0 => Normalize(str),
+            1 => Normalize(Cleanup(str)),
+            2 => Normalize(ReplaceRoman(Cleanup(str))),
+            _ => throw new ArgumentOutOfRangeException(nameof(_index), _index, "Enumeration has finished"),
+        };
+
+        public readonly string[] ToArray()
+        {
+            return
+            [
+                Normalize(str),
+                Normalize(Cleanup(str)),
+                Normalize(ReplaceRoman(Cleanup(str))),
+            ];
+        }
+
+        public CandidatesEnumerator GetEnumerator() => this;
+    }
+
+    private bool TryMatchAnyHash(ReadOnlySpan<string?> candidates, [MaybeNullWhen(false)] out SadPandaIdToken parts, [MaybeNullWhen(false)] out ReadOnlySpan<char> match, out ulong matchedHash)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (candidate == null) continue;
+
+            foreach (var subcandidate in GetCandidates(candidate))
+            {
+                if (sadPandaNameHashes.TryGetValue(matchedHash = Hash(match = subcandidate), out parts)) return true;
+            }
+        }
+
+        matchedHash = 0;
+        match = default;
+        parts = default;
+        return false;
+    }
+
+    private static bool CheckIfDbEntryMatches(SadPandaGallery pGallery, ReadOnlySpan<string?> candidates)
+    {
+        var titleEngs = pGallery.Title != null ? GetCandidates(pGallery.Title).ToArray() : [];
+        var titleJpns = pGallery.TitleJpn != null ? GetCandidates(pGallery.TitleJpn).ToArray() : [];
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate == null) continue;
+
+            var i = 0;
+            foreach (var subcandidate in GetCandidates(candidate))
+            {
+                if (titleEngs.Length > i && subcandidate.SequenceEqual(titleEngs[i])) return true;
+                if (titleJpns.Length > i && subcandidate.SequenceEqual(titleJpns[i])) return true;
+                i++;
+            }
+        }
+
+        return false;
+    }
+
+    private TableMapping? _tableMapping = null;
+    public bool FindMapping(ReadOnlySpan<string?> candidates, [MaybeNullWhen(false)] out SadPandaGallery pGallery)
+    {
+        if (TryMatchAnyHash(candidates, out var pandaId, out var match, out var matchedHash))
+        {
+            var gid = pandaId.Gid;
+
+            pGallery = _sadPandaGalleries.Connection
+                .CreateCommand("select * from gallery where gid = ? limit 1", gid)
+                .ExecuteDeferredQuery<SadPandaGallery>(_tableMapping ??= _sadPandaGalleries.Connection.GetMapping(typeof(SadPandaGallery)))
+                .FirstOrDefault();
+
+            if (!CheckIfDbEntryMatches(pGallery, candidates))
+            {
+                throw new InvalidOperationException($"Hash collision! {pGallery.Title} vs {candidates[0]} for match {match} (hash {matchedHash})");
+            }
+
+            return true;
+        }
+
+        pGallery = default;
+        return false;
+    }
+    
+    [GeneratedRegex("[0-9]+", RegexOptions.Compiled)]
+    private static partial Regex NumberRegex();
+    // private static readonly SearchValues<char> IsNumberSearchValues = SearchValues.Create(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    private static string ReplaceRoman(string str)
+    {
+        // const int stackallocThreshold = 512;
+        //
+        // var sb = new DefaultInterpolatedStringHandler(0, 0, null, stackalloc char[Math.Min((int)(str.Length * 1.2), stackallocThreshold)]);
+        //
+        // while (str.IndexOfAny(IsNumberSearchValues) is var idx and not -1)
+        // {
+        //     sb.AppendFormatted(str[..idx]);
+        //
+        //     var nextNonDigitCharacter = str[(idx + 1)..].IndexOfAnyExcept(IsNumberSearchValues);
+        //
+        //     if (nextNonDigitCharacter != -1)
+        //     {
+        //         var end = idx + 1 + nextNonDigitCharacter;
+        //         AppendRoman(str[idx..end], ref sb);
+        //         str = str[(end + 1)..];
+        //     }
+        //     else
+        //     {
+        //         str = str[(idx + 1)..];
+        //         break;
+        //     }
+        //
+        //     continue;
+        //
+        //     static void AppendRoman(ReadOnlySpan<char> str, ref DefaultInterpolatedStringHandler sb)
+        //     {
+        //         str = str.TrimStart('0');
+        //         if (str is []) return;
+        //
+        //         if (!long.TryParse(str, out var number))
+        //         {
+        //             sb.AppendFormatted(str);
+        //             return;
+        //         }
+        //
+        //         switch (number)
+        //         {
+        //             case >= 4000:
+        //                 sb.AppendFormatted(str);
+        //                 return;
+        //             case < 1:
+        //                 return;
+        //         }
+        //
+        //         while (number >= 1)
+        //         {
+        //             switch (number)
+        //             {
+        //                 case >= 1000: sb.AppendLiteral("M"); number -= 1000; break;
+        //                 case >= 900: sb.AppendLiteral("CM"); number -= 900; break;
+        //                 case >= 500: sb.AppendLiteral("D"); number -= 500; break;
+        //                 case >= 400: sb.AppendLiteral("CD"); number -= 400; break;
+        //                 case >= 100: sb.AppendLiteral("C"); number -= 100; break;
+        //                 case >= 90: sb.AppendLiteral("XC"); number -= 90; break;
+        //                 case >= 50: sb.AppendLiteral("L"); number -= 50; break;
+        //                 case >= 40: sb.AppendLiteral("XL"); number -= 40; break;
+        //                 case >= 10: sb.AppendLiteral("X"); number -= 10; break;
+        //                 case >= 9: sb.AppendLiteral("IX"); number -= 9; break;
+        //                 case >= 5: sb.AppendLiteral("V"); number -= 5; break;
+        //                 case >= 4: sb.AppendLiteral("IV"); number -= 4; break;
+        //                 default: sb.AppendLiteral("I"); number -= 1; break;
+        //             }
+        //         }
+        //     }
+        // }
+        //
+        // sb.AppendFormatted(str);
+        //
+        // return sb.ToStringAndClear();
+        
+        return NumberRegex().Replace(str, static e => ToRoman(e.ValueSpan));
+    }
+    
+    private static string ToRoman(ReadOnlySpan<char> str)
+    {
+        str = str.TrimStart('0');
+        if (str is []) return string.Empty;
+
+        if (!long.TryParse(str, out var number))
+            return new string(str);
+
         switch (number)
         {
-            case >= 1000: sb.AppendLiteral("M"); number -= 1000; break;
-            case >= 900: sb.AppendLiteral("CM"); number -= 900; break;
-            case >= 500: sb.AppendLiteral("D"); number -= 500; break;
-            case >= 400: sb.AppendLiteral("CD"); number -= 400; break;
-            case >= 100: sb.AppendLiteral("C"); number -= 100; break;
-            case >= 90: sb.AppendLiteral("XC"); number -= 90; break;
-            case >= 50: sb.AppendLiteral("L"); number -= 50; break;
-            case >= 40: sb.AppendLiteral("XL"); number -= 40; break;
-            case >= 10: sb.AppendLiteral("X"); number -= 10; break;
-            case >= 9: sb.AppendLiteral("IX"); number -= 9; break;
-            case >= 5: sb.AppendLiteral("V"); number -= 5; break;
-            case >= 4: sb.AppendLiteral("IV"); number -= 4; break;
-            default: sb.AppendLiteral("I"); number -= 1; break;
+            case >= 4000:
+                return new string(str);
+            case < 1:
+                return string.Empty;
         }
+
+        var sb = new DefaultInterpolatedStringHandler(0, 0, null, stackalloc char["MMMCMXCIX".Length]);
+
+        while (number >= 1)
+        {
+            switch (number)
+            {
+                case >= 1000: sb.AppendLiteral("M"); number -= 1000; break;
+                case >= 900: sb.AppendLiteral("CM"); number -= 900; break;
+                case >= 500: sb.AppendLiteral("D"); number -= 500; break;
+                case >= 400: sb.AppendLiteral("CD"); number -= 400; break;
+                case >= 100: sb.AppendLiteral("C"); number -= 100; break;
+                case >= 90: sb.AppendLiteral("XC"); number -= 90; break;
+                case >= 50: sb.AppendLiteral("L"); number -= 50; break;
+                case >= 40: sb.AppendLiteral("XL"); number -= 40; break;
+                case >= 10: sb.AppendLiteral("X"); number -= 10; break;
+                case >= 9: sb.AppendLiteral("IX"); number -= 9; break;
+                case >= 5: sb.AppendLiteral("V"); number -= 5; break;
+                case >= 4: sb.AppendLiteral("IV"); number -= 4; break;
+                default: sb.AppendLiteral("I"); number -= 1; break;
+            }
+        }
+
+        return sb.ToStringAndClear();
     }
 
-    return sb.ToStringAndClear();
-}
+    private static ulong Hash(ReadOnlySpan<char> str)
+        => XxHash3.HashToUInt64(MemoryMarshal.Cast<char, byte>(str));
 
-namespace HentaiMapGen
-{
-    [method: JsonConstructor]
-    internal readonly record struct SadPandaUrlParts(uint Gid, ulong Token)
+    private static string Normalize(string str)
     {
-        public string TokenHex => Token.ToString("x10");
+        // const int stackallocThreshold = 512;
+        //
+        // Span<char> buffer = stackalloc char[stackallocThreshold];
+        //
+        // var normalized = NormalizeImpl(str, buffer, NormalizationForm.FormD, out var toReturn, out var isAsciiString);
+        //
+        // char[]? toReturn2 = null;
+        // var toLowerDestBuff = normalized.Length < stackallocThreshold
+        //     ? toReturn != null ? buffer : stackalloc char[normalized.Length]
+        //     : (toReturn2 = ArrayPool<char>.Shared.Rent(normalized.Length));
+        //
+        // int charsWritten;
+        // if (isAsciiString)
+        // {
+        //     Ascii.ToLower(normalized, toLowerDestBuff, out charsWritten);
+        //     // don't need to check charsWritten, success is guaranteed if dest.Length >= src.Length
+        // }
+        // else
+        // {
+        //     charsWritten = normalized.ToLowerInvariant(toLowerDestBuff);
+        //
+        //     if (charsWritten == -1)
+        //     {
+        //         if (toReturn2 != null) ArrayPool<char>.Shared.Return(toReturn2);
+        //         if (toReturn != null) ArrayPool<char>.Shared.Return(toReturn);
+        //
+        //         throw new InvalidOperationException("Could not lower normalized string");
+        //     }
+        // }
+        //
+        // var outArray = new string(toLowerDestBuff[..charsWritten].Trim());
+        //
+        // if (toReturn2 != null) ArrayPool<char>.Shared.Return(toReturn2);
+        // if (toReturn != null) ArrayPool<char>.Shared.Return(toReturn);
+        //
+        // return outArray;
+        //
+        // static ReadOnlySpan<char> NormalizeImpl(ReadOnlySpan<char> str, Span<char> buffer512, NormalizationForm normalizationForm, out char[]? toReturn, out bool isAsciiString)
+        // {
+        //     toReturn = null;
+        //     
+        //     // ReSharper disable once AssignmentInConditionalExpression
+        //     if (isAsciiString = Ascii.IsValid(str))
+        //     {
+        //         // If its ASCII && one of the 4 main forms, then its already normalized
+        //         if (normalizationForm is NormalizationForm.FormC or NormalizationForm.FormKC or NormalizationForm.FormD or NormalizationForm.FormKD)
+        //             return str;
+        //     }
+        //     
+        //     ValidateArguments(str, normalizationForm);
+        //
+        //     if (IcuIsNormalized(str, normalizationForm))
+        //     {
+        //         return str;
+        //     }
+        //     
+        //     return IcuNormalize(str, buffer512, normalizationForm, out toReturn);
+        //     
+        //     static void ValidateArguments(ReadOnlySpan<char> strInput, NormalizationForm normalizationForm)
+        //     {
+        //         Debug.Assert(strInput != null);
+        //
+        //         if (OperatingSystem.IsBrowser() && normalizationForm is NormalizationForm.FormKC or NormalizationForm.FormKD)
+        //         {
+        //             // Browser's ICU doesn't contain data needed for FormKC and FormKD
+        //             throw new PlatformNotSupportedException();
+        //         }
+        //
+        //         if (normalizationForm != NormalizationForm.FormC && normalizationForm != NormalizationForm.FormD &&
+        //             normalizationForm != NormalizationForm.FormKC && normalizationForm != NormalizationForm.FormKD)
+        //         {
+        //             throw new ArgumentException("Argument_InvalidNormalizationForm", nameof(normalizationForm));
+        //         }
+        //
+        //         if (HasInvalidUnicodeSequence(strInput))
+        //         {
+        //             throw new ArgumentException("Argument_InvalidCharSequenceNoIndex", nameof(strInput));
+        //         }
+        //     }
+        //
+        //     // ICU does not signal an error during normalization if the input string has invalid unicode,
+        //     // unlike Windows (which uses the ERROR_NO_UNICODE_TRANSLATION error value to signal an error).
+        //     //
+        //     // We walk the string ourselves looking for these bad sequences so we can continue to throw
+        //     // ArgumentException in these cases.
+        //     static bool HasInvalidUnicodeSequence(ReadOnlySpan<char> s)
+        //     {
+        //         for (int i = 0; i < s.Length; i++)
+        //         {
+        //             char c = s[i];
+        //
+        //             if (c < '\ud800')
+        //             {
+        //                 continue;
+        //             }
+        //
+        //             if (c == '\uFFFE')
+        //             {
+        //                 return true;
+        //             }
+        //
+        //             // If we see low surrogate before a high one, the string is invalid.
+        //             if (char.IsLowSurrogate(c))
+        //             {
+        //                 return true;
+        //             }
+        //
+        //             if (char.IsHighSurrogate(c))
+        //             {
+        //                 if (i + 1 >= s.Length || !char.IsLowSurrogate(s[i + 1]))
+        //                 {
+        //                     // A high surrogate at the end of the string or a high surrogate
+        //                     // not followed by a low surrogate
+        //                     return true;
+        //                 }
+        //                 else
+        //                 {
+        //                     i++; // consume the low surrogate.
+        //                     continue;
+        //                 }
+        //             }
+        //         }
+        //
+        //         return false;
+        //     }
+        //
+        //     static unsafe bool IcuIsNormalized(ReadOnlySpan<char> strInput, NormalizationForm normalizationForm)
+        //     {
+        //         [DllImport("System.Globalization.Native", EntryPoint = "GlobalizationNative_IsNormalized", CharSet = CharSet.Unicode)]
+        //         static extern int IsNormalized(NormalizationForm normalizationForm, char* src, int srcLen);
+        //
+        //         // Debug.Assert(!GlobalizationMode.Invariant);
+        //         // Debug.Assert(!GlobalizationMode.UseNls);
+        //
+        //         int ret;
+        //         fixed (char* pInput = strInput)
+        //         {
+        //             ret = IsNormalized(normalizationForm, pInput, strInput.Length);
+        //         }
+        //
+        //         if (ret == -1)
+        //         {
+        //             throw new ArgumentException("Argument_InvalidCharSequenceNoIndex", nameof(strInput));
+        //         }
+        //
+        //         return ret == 1;
+        //     }
+        //
+        //     static unsafe ReadOnlySpan<char> IcuNormalize(ReadOnlySpan<char> strInput, Span<char> buffer512, NormalizationForm normalizationForm, out char[]? toReturn)
+        //     {
+        //         [DllImport("System.Globalization.Native", EntryPoint = "GlobalizationNative_NormalizeString", CharSet = CharSet.Unicode)]
+        //         static extern int NormalizeString(
+        //             NormalizationForm normalizationForm,
+        //             char* src,
+        //             int srcLen,
+        //             char* dstBuffer,
+        //             int dstBufferCapacity);
+        //         
+        //         // Debug.Assert(!GlobalizationMode.Invariant);
+        //         // Debug.Assert(!GlobalizationMode.UseNls);
+        //
+        //         toReturn = null;
+        //
+        //         Span<char> buffer = strInput.Length <= stackallocThreshold ? buffer512 : (toReturn = ArrayPool<char>.Shared.Rent(strInput.Length));
+        //
+        //         for (int attempt = 0; attempt < 2; attempt++)
+        //         {
+        //             int realLen;
+        //             fixed (char* pInput = strInput)
+        //             fixed (char* pDest = &MemoryMarshal.GetReference(buffer))
+        //             {
+        //                 realLen = NormalizeString(normalizationForm, pInput, strInput.Length, pDest, buffer.Length);
+        //             }
+        //
+        //             if (realLen == -1)
+        //             {
+        //                 throw new ArgumentException("Argument_InvalidCharSequenceNoIndex", nameof(strInput));
+        //             }
+        //
+        //             if (realLen <= buffer.Length)
+        //             {
+        //                 ReadOnlySpan<char> result = buffer[..realLen];
+        //                 return result.SequenceEqual(strInput) ? strInput : result;
+        //             }
+        //
+        //             Debug.Assert(realLen > stackallocThreshold);
+        //
+        //             if (attempt == 0)
+        //             {
+        //                 if (toReturn != null)
+        //                 {
+        //                     // Clear toReturn first to ensure we don't return the same buffer twice
+        //                     char[] temp = toReturn;
+        //                     toReturn = null;
+        //                     ArrayPool<char>.Shared.Return(temp);
+        //                 }
+        //
+        //                 buffer = toReturn = ArrayPool<char>.Shared.Rent(realLen);
+        //             }
+        //         }
+        //
+        //         throw new ArgumentException("Argument_InvalidCharSequenceNoIndex", nameof(strInput));
+        //     }
+        // }
 
-        public static SadPandaUrlParts Parse(long gid, string token)
-            => new((uint)gid, ulong.Parse(token, NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+        return str.Normalize(NormalizationForm.FormD).ToLowerInvariant().Trim();
     }
-    
-    public readonly record struct DeletedGallery(
-        [property: JsonPropertyName("Code")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint Code,
-        [property: JsonPropertyName("Title")] string Title,
-        [property: JsonPropertyName("FullTitle")] string FullTitle,
-        [property: JsonPropertyName("Artists")] string[] Artists,
-        [property: JsonPropertyName("Groups")] string[] Groups,
-        [property: JsonPropertyName("Parodies")] string[] Parodies,
-        [property: JsonPropertyName("Characters")] string[] Characters,
-        [property: JsonPropertyName("Pages")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint Pages,
-        [property: JsonPropertyName("UploadDate")] DateTimeOffset UploadDate
-    );
-}
 
-partial class Program
-{
-    [GeneratedRegex(@"\p{P}\p{S}\p{M}\p{C}\s]", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"[\p{P}\p{S}\p{M}\p{C}\s]", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex PunctuationEtcRegex();
 
-    [GeneratedRegex("[0-9]+")]
-    private static partial Regex NumberRegex();
+    private static string Cleanup(string str)
+    {
+        // const int stackallocThreshold = 512;
+        //
+        // var sb = new DefaultInterpolatedStringHandler(0, 0, null, stackalloc char[Math.Min(str.Length, stackallocThreshold)]);
+        //
+        // while (str.IndexOfWhitespaceOrAnyPunctuation() is var idx and not -1)
+        // {
+        //     sb.AppendFormatted(str[..idx]);
+        //     str = str[(idx + 1)..];
+        // }
+        //
+        // sb.AppendFormatted(str);
+        //
+        // return sb.ToStringAndClear();
+
+        return PunctuationEtcRegex().Replace(str, "");
+    }
+
+    public void Dispose()
+    {
+        sqliteConnection.Dispose();
+    }
 }
+
+// file static class PunctuationEtcHelper 
+// {
+//     /// <summary>Finds the next index of any character that matches a character in the set [\p{P}\p{S}\p{M}\p{C}\s].</summary>
+//     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+//     internal static int IndexOfWhitespaceOrAnyPunctuation(this ReadOnlySpan<char> span)
+//     {
+//         int i = span.IndexOfAnyExcept(AsciiLettersAndDigits);
+//         if ((uint)i < (uint)span.Length)
+//         {
+//             if (char.IsAscii(span[i]))
+//             {
+//                 return i;
+//             }
+//
+//             do
+//             {
+//                 char ch;
+//                 if (((ch = span[i]) < 128 ? ("\uffff\uffff\uffffﰀ\u0001\u0001"[ch >> 4] & (1 << (ch & 0xF))) != 0 : RegexRunner.CharInClass(ch, "\0\0\u001c\0\u0013\u0014\u0016\u0019\u0015\u0018\u0017\0\0\u001b\u001c\u001a\u001d\0\0\a\b\u0006\0\0\u000f\u0010\u001e\u0012\u0011\0d")))
+//                 {
+//                     return i;
+//                 }
+//                 i++;
+//             }
+//             while ((uint)i < (uint)span.Length);
+//         }
+//     
+//         return -1;
+//     }
+//     
+//     /// <summary>Supports searching for characters in or not in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".</summary>
+//     private static readonly SearchValues<char> AsciiLettersAndDigits = SearchValues.Create("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+// }

@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <MemoryPackGenerator_TypeScriptOutputDirectory>$(MSBuildProjectDirectory)\..\npanda\src\lib\memorypack\models</MemoryPackGenerator_TypeScriptOutputDirectory>
+        <MemoryPackGenerator_TypeScriptEnableNullableTypes>true</MemoryPackGenerator_TypeScriptEnableNullableTypes>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CommunityToolkit.HighPerformance" Version="8.3.2" />
+        <PackageReference Include="Google.Protobuf" Version="3.28.1"/>
+        <PackageReference Include="JetBrains.Annotations" Version="2024.2.0"/>
+        <PackageReference Include="MemoryPack" Version="1.21.3"/>
+        <PackageReference Include="MemoryPack.Streaming" Version="1.21.3"/>
+        <PackageReference Include="Microsoft.Experimental.Collections" Version="1.0.6-e190117-3"/>
+        <PackageReference Include="sqlite-net-pcl" Version="1.9.172"/>
+        <CompilerVisibleProperty Include="MemoryPackGenerator_TypeScriptOutputDirectory" />
+        <CompilerVisibleProperty Include="MemoryPackGenerator_TypeScriptImportExtension" />
+        <CompilerVisibleProperty Include="MemoryPackGenerator_TypeScriptConvertPropertyName" />
+        <CompilerVisibleProperty Include="MemoryPackGenerator_TypeScriptEnableNullableTypes" />
+        <PackageReference Include="System.IO.Pipelines" Version="9.0.0-rc.2.24473.5" />
+        <PackageReference Include="ZstdNet" Version="1.4.5" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Folder Include="Bebop\"/>
+    </ItemGroup>
+
+</Project>

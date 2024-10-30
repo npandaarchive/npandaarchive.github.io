@@ -4,6 +4,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HentaiMapGen", "HentaiMapGe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MassageForWeb", "MassageForWeb\MassageForWeb.csproj", "{0DC72030-3E9A-4AEB-B8CE-F9A2425E86AF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MassageNewDb", "MassageNewDb\MassageNewDb.csproj", "{67F15084-C19D-4328-A5C7-377FDD30B3CC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HentaiMapGenLib", "HentaiMapGenLib\HentaiMapGenLib.csproj", "{F9B29C0E-0BA0-4829-9CB5-6050B50E48B8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NHentaiScrapeV2", "NHentaiScrapeV2\NHentaiScrapeV2.csproj", "{D09A94B2-E673-41EA-B3DF-BB72B759F924}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +24,17 @@ Global
 		{0DC72030-3E9A-4AEB-B8CE-F9A2425E86AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0DC72030-3E9A-4AEB-B8CE-F9A2425E86AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0DC72030-3E9A-4AEB-B8CE-F9A2425E86AF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{67F15084-C19D-4328-A5C7-377FDD30B3CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{67F15084-C19D-4328-A5C7-377FDD30B3CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{67F15084-C19D-4328-A5C7-377FDD30B3CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{67F15084-C19D-4328-A5C7-377FDD30B3CC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F9B29C0E-0BA0-4829-9CB5-6050B50E48B8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F9B29C0E-0BA0-4829-9CB5-6050B50E48B8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F9B29C0E-0BA0-4829-9CB5-6050B50E48B8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F9B29C0E-0BA0-4829-9CB5-6050B50E48B8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D09A94B2-E673-41EA-B3DF-BB72B759F924}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D09A94B2-E673-41EA-B3DF-BB72B759F924}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D09A94B2-E673-41EA-B3DF-BB72B759F924}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D09A94B2-E673-41EA-B3DF-BB72B759F924}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
