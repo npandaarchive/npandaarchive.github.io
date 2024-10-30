@@ -24,16 +24,17 @@ if (getReleaseResponse.status != 200) {
     process.exit(0);
 }
 
-const downloadUrl = getReleaseResponse.data[0].assets.find(e => e.name == osPath.basename(path))?.browser_download_url
+const release = getReleaseResponse.data.find(e => e.assets.find(e => e.name == osPath.basename(path))?.browser_download_url)!;
+const downloadUrl = release.assets.find(e => e.name == osPath.basename(path))?.browser_download_url;
 if (!downloadUrl) {
-    console.log(`no downloadUrl for ${getReleaseResponse.data[0].name}`);
+    console.log(`no downloadUrl for ${release.name}`);
     process.exit(0);
 }
 
 const buf = await fetch(downloadUrl).then(e => e.ok ? e.arrayBuffer() : undefined);
 if (buf) {
     await fs.writeFile(path, Buffer.from(buf));
-    console.log(`downloaded database from ${getReleaseResponse.data[0].name}}`);
+    console.log(`downloaded database from ${release.name}}`);
 } else {
     console.log('not ok');
 }
