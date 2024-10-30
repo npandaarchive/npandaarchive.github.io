@@ -89,7 +89,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
 
-    - uses: EndBug/add-and-commit@v9 # You can change this to use a specific version.
+    - id: add-and-commit
+      uses: EndBug/add-and-commit@v9 # You can change this to use a specific version.
       with:
         # The arguments for the `git add` command (see the paragraph below for more info)
         # Default: '.'
@@ -102,10 +103,6 @@ jobs:
         # The email of the user that will be displayed as the author of the commit.
         # Default: depends on the default_author input
         author_email: bot@piss.invalid
-
-        # The local path to the directory where your repository is located. You should use actions/checkout first to set it up.
-        # Default: '.'
-        cwd: ${{ github.workspace }}
 
         # Determines the way the action fills missing author name and email. Three options are available:
         # - github_actor -> UserName <UserName@users.noreply.github.com>
@@ -133,3 +130,10 @@ jobs:
         # Arguments for the git pull command. By default, the action does not pull.
         # Default: ''
         pull: '--rebase'
+
+    - name: trigger svelte workflow
+      if: ${{ steps.add-and-commit.outputs.committed == 'true' }}
+      run: |
+        pnpx tsx ./npanda-actions/dispatch-action.ts svelte.yml
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
