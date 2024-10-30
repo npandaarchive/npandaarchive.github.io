@@ -45,7 +45,7 @@ jobs:
         # download api dump
         wget https://github.com/npandaarchive/temp/releases/download/t/apidump.tzst -O apidump.tzst
         mkdir "$exhentaiApiDumpDir"
-        /usr/bin/tar -xf apidump.tzst -P -C "$exhentaiApiDumpDir" --use-compress-program unzstd
+        /usr/bin/tar -xf apidump.tzst -P -C "$exhentaiApiDumpDir" --use-compress-program "unzstd --long=30"
         rm -rf apidump.tzst
 
         # restore
