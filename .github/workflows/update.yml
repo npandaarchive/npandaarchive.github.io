@@ -23,42 +23,68 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ROOT_DIR: ${{ github.workspace }}
+      DATA_DIR: ${{ github.workspace }}/Data
+      EXHENTAI_API_DUMP_DIR: ${{ github.workspace }}/exhentai
+
     steps:
     - uses: actions/checkout@v4
+
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9'
+        dotnet-quality: 'preview'
+
     - uses: pnpm/action-setup@v4
       with:
         version: 9
 
-    - run: |
-        rootDir="$(pwd)"
-        dataDir="$rootDir/Data"
-
-        cd "$rootDir/npanda-actions"
+    - name: pnpm install
+      run: |
+        cd "$ROOT_DIR/npanda-actions"
         pnpm install
-        cd "$rootDir"
+        cd "$ROOT_DIR"
 
-        mkdir "$dataDir"
-        mkdir "$dataDir/Output"
+    - name: make dirs
+      run: |
+        mkdir "$DATA_DIR"
+        mkdir "$DATA_DIR/Output"
 
-        exhentaiApiDumpDir="$rootDir/exhentai"
-
+    - name: download api dump
+      run: |
         # download api dump
         wget https://github.com/npandaarchive/temp/releases/download/t/apidump.tzst -O apidump.tzst
-        mkdir "$exhentaiApiDumpDir"
-        /usr/bin/tar -xf apidump.tzst -P -C "$exhentaiApiDumpDir" --use-compress-program "unzstd --long=30"
+        mkdir "$EXHENTAI_API_DUMP_DIR"
+        /usr/bin/tar -xf apidump.tzst -P -C "$EXHENTAI_API_DUMP_DIR" --use-compress-program "unzstd --long=30"
         rm -rf apidump.tzst
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
+    - name: restore data.tzst
+      run: |
         # restore
         pnpx tsx ./npanda-actions/load.ts data.tzst
-        /usr/bin/tar -xf data.tzst -P -C "$rootDir" --use-compress-program "unzstd --long=30"
+        /usr/bin/tar -xf data.tzst -P -C "$ROOT_DIR" --use-compress-program "unzstd --long=30"
         rm -rf data.tzst
 
-        dotnet run --project ./NHentaiScrapeV2/NHentaiScrapeV2.csproj --configuration Release -- "$dataDir"
-        dotnet run --project ./HentaiMapGen/HentaiMapGen.csproj --configuration Release -- "$exhentaiApiDumpDir/api_dump.sqlite" "$dataDir"
-        dotnet run --project ./MassageForWeb/MassageForWeb.csproj --configuration Release -- "$dataDir" "$rootDir/npanda/static/data"
+    - name: run NHentaiScrapeV2
+      run: |
+        dotnet run --project ./NHentaiScrapeV2/NHentaiScrapeV2.csproj --configuration Release -- "$DATA_DIR"
 
+    - name: run HentaiMapGen
+      run: |
+        dotnet run --project ./HentaiMapGen/HentaiMapGen.csproj --configuration Release -- "$EXHENTAI_API_DUMP_DIR/api_dump.sqlite" "$DATA_DIR"
+
+    - name: run MassageForWeb
+      run: |
+        dotnet run --project ./MassageForWeb/MassageForWeb.csproj --configuration Release -- "$DATA_DIR" "$ROOT_DIR/npanda/static/data"
+
+    - name: save data.tzst
+      run: |
         # save
-        /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$rootDir" "Data" --use-compress-program "zstdmt --long=30"
+        /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$ROOT_DIR" "Data" --use-compress-program "zstdmt --long=30"
         pnpx tsx ./npanda-actions/save.ts data.tzst
+        rm -rf data.tzst
       env:
         GITHUB_TOKEN: ${{ github.token }}
