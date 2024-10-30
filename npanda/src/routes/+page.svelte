@@ -1,13 +1,13 @@
 <script lang="ts">
-    import type { Api } from '$lib/worker/worker';
+    import type { Api, Book } from '$lib/worker/worker';
+    import { ImageType } from '$lib/worker/worker';
+
     import { wrap } from 'comlink';
     import { Badge, Button, Col, Container, Input, InputGroup, InputGroupText, Label, Row, Spinner, Card } from "@sveltestrap/sveltestrap";
     import type { IGDataReq, IGDataRes, IGError, IGMetadata } from '$lib/e-hentai-types';
     import dayjs from 'dayjs';
     import relativeTime from 'dayjs/plugin/relativeTime';
     import { base } from '$app/paths';
-    import type { Book } from '$lib/memorypack/models/Book';
-    import { ImageType } from '$lib/memorypack/models/ImageType';
 
     const worker = wrap<Api>(
         new Worker(new URL("$lib/worker/worker.ts", import.meta.url), {
@@ -15,9 +15,9 @@
         }),
     ) as Api;
 
-    // const errored = worker.getProto(`${base}/data/errored.mpack.zst`, 'ErroredGalleries');
-    const mappings = worker.getMPack(`${base}/data/mappings.mpack.zst`, 'NHentaiMapping');
-    const unmatched = worker.getMPack(`${base}/data/unmatched.mpack.zst`, 'NaGalleries');
+    // const errored = worker.getProto(`${base}/data/errored.msgpack.zst`, 'ErroredGalleries');
+    const mappings = worker.getMPack(`${base}/data/mappings.msgpack.zst`, 'NHentaiMapping');
+    const unmatched = worker.getMPack(`${base}/data/unmatched.msgpack.zst`, 'NaGalleries');
 
     function tokenToHex(token: bigint): string {
         return token.toString(16).padStart(10, '0');
@@ -36,7 +36,7 @@
             // errored,
             mappings,
             unmatched,
-            worker.getMPack(`${base}/data/galleries/${nhId % 1024}.bin.zst`, 'BookMap')
+            worker.getMPack(`${base}/data/galleries/${nhId % 1024}.msgpack.zst`, 'BookMap')
         ]);
 
         console.log(amappings, aunmatched, ngalleries);
@@ -261,15 +261,15 @@
 
                             {#each groupBy(nGallery.tags ?? [], e => e.type) as group (group.key)}
                                 <p><b>{String(group.key)[0].toUpperCase()}{String(group.key).slice(1)}:</b>
-                                    {#each group.members as tag (tag?.id)}
-                                    <a href="https://nhentai.net{tag?.url}"><Badge color="secondary" pill={true}>{tag?.name} ({tag?.count})</Badge></a>
+                                    {#each group.members as tag (tag.id)}
+                                    <a href="https://nhentai.net{tag.url}"><Badge color="secondary" pill={true}>{tag.name} ({tag.count})</Badge></a>
                                     {/each}
                                 </p>
                             {/each}
 
                             {#if nGallery.images}
                             <p>
-                                <b>Pages:</b> <Badge color="secondary" pill={true}>{nGallery.images?.pages?.length}</Badge>
+                                <b>Pages:</b> <Badge color="secondary" pill={true}>{nGallery.images?.pages.length}</Badge>
                             </p>
                             {/if}
 

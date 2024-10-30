@@ -1,8 +1,5 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
-using System.Buffers;
-using System.Buffers.Binary;
-using System.Collections;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Hashing;
@@ -12,11 +9,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using CommunityToolkit.HighPerformance.Buffers;
 using HentaiMapGenLib.Models;
 using HentaiMapGenLib.Models.Json;
-using MemoryPack;
-using MemoryPack.Streaming;
+using MessagePack;
 using Microsoft.Collections.Extensions;
 using SQLite;
 using ZstdNet;
@@ -25,56 +20,6 @@ namespace HentaiMapGen;
 
 internal static partial class Program
 {
-    private class MemoryPackStreamingWriter<T, TWriter>(
-        TWriter writer,
-        MemoryPackWriterOptionalState state,
-        int flushRate
-    ) : IAsyncDisposable
-        where TWriter : IBufferWriter<byte>
-    {
-        private TWriter _writer = writer;
-        private long _unflushedCount;
-
-        public async ValueTask AppendAsync(T value, CancellationToken cancellationToken = default)
-        {
-            var writer = new MemoryPackWriter<TWriter>(ref _writer, state);
-            writer.WriteValue(value);
-
-            _unflushedCount += writer.WrittenCount;
-            writer.Flush();
-
-            if (_writer is PipeWriter pipeWriter && _unflushedCount >= flushRate)
-            {
-                _unflushedCount = 0;
-                await pipeWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (_writer is PipeWriter pipeWriter)
-                await pipeWriter.FlushAsync().ConfigureAwait(false);
-            ((IDisposable)state).Dispose();
-        }
-    }
-    
-    private static MemoryPackStreamingWriter<T, TWriter> IncrementalSerialize<T, TWriter>(TWriter writer, int count, int flushRate = 4096, MemoryPackSerializerOptions? options = default)
-        where TWriter : IBufferWriter<byte>
-    {
-        var state = MemoryPackWriterOptionalStatePool.Rent(options);
-
-        WriteCollectionHeader(ref writer, count, state);
-
-        return new MemoryPackStreamingWriter<T, TWriter>(writer, state, flushRate);
-
-        static void WriteCollectionHeader(ref TWriter awriter, int count, MemoryPackWriterOptionalState state)
-        {
-            var writer = new MemoryPackWriter<TWriter>(ref awriter, state);
-            writer.WriteCollectionHeader(count);
-            writer.Flush();
-        }
-    }
-    
     public static async Task Main(string[] args)
     {
         Console.WriteLine("Hello, World!");
@@ -101,7 +46,7 @@ internal static partial class Program
 
         using var nhentaiDb = new SQLiteConnection($@"{dataFolder}\manga.db", SQLiteOpenFlags.ReadOnly);
 
-        var mpackTotal = TimeSpan.Zero;
+        var msgpackTotal = TimeSpan.Zero;
         var mappingTotal = TimeSpan.Zero;
 
         var galleries = new List<Book>();
@@ -142,7 +87,7 @@ internal static partial class Program
                 {
                     var sw1 = Stopwatch.GetTimestamp();
                     galleries.Add(nGallery);
-                    mpackTotal += Stopwatch.GetElapsedTime(sw1);
+                    msgpackTotal += Stopwatch.GetElapsedTime(sw1);
                 }
 
                 #endregion
@@ -202,15 +147,15 @@ internal static partial class Program
         // await fileStream.WriteAsync(arrWriter.WrittenMemory);
 
         Console.WriteLine($"Total time: {Stopwatch.GetElapsedTime(sw0)}");
-        Console.WriteLine($"MemoryPack took {mpackTotal}");
+        Console.WriteLine($"MemoryPack took {msgpackTotal}");
         Console.WriteLine($"Mapping nhentai->panda took {mappingTotal}");
         Console.WriteLine($"Found NHentai->Panda mappings: {nhentaiMapping.Count}");
         Console.WriteLine($"Not found NHentai->Panda mappings: {naGalleries.Count}");
         Console.WriteLine($"Errored (deleted, etc...) NHentai galleries: {erroredGalleries.Count}");
 
-        await using var fileStream = File.Create($@"{outputFolder}\galleries.mpack");
-        // await using var mpackOutput = new CompressionStream(fileStream, new CompressionOptions(8));
-        await MemoryPackStreamingSerializer.SerializeAsync(fileStream, galleries.Count, galleries);
+        await using var fileStream = File.Create($@"{outputFolder}\galleries.msgpack.zst");
+        await using var msgpackOutput = new CompressionStream(fileStream, new CompressionOptions(8));
+        await MessagePackSerializer.SerializeAsync(fileStream, galleries);
 
         await using (var stream = File.Create($"{outputFolder}/nhentaiMapping.json"))
         {
@@ -236,7 +181,7 @@ internal partial class SadPandaNameMapping(SQLiteConnection sqliteConnection, Di
         var pandaDb = new SQLiteConnection(pandaDbLocation, SQLiteOpenFlags.ReadOnly);
 
         Dictionary<ulong, SadPandaIdToken> sadPandaNameHashes;
-        if (!File.Exists($@"{dataFolder}\sadPandaNameHashes.mpack.zst"))
+        if (!File.Exists($@"{dataFolder}\sadPandaNameHashes.msgpack.zst"))
         {
             sadPandaNameHashes = new Dictionary<ulong, SadPandaIdToken>();
             var sw = Stopwatch.GetTimestamp();
@@ -264,15 +209,15 @@ internal partial class SadPandaNameMapping(SQLiteConnection sqliteConnection, Di
 
             Console.WriteLine($"Created sadPandaNameHashes in {Stopwatch.GetElapsedTime(sw)}. Total {sadPandaNameHashes.Count} sadpanda name hashes.");
 
-            await using var fileStream = File.Create($@"{dataFolder}\sadPandaNameHashes.mpack.zst");
+            await using var fileStream = File.Create($@"{dataFolder}\sadPandaNameHashes.msgpack.zst");
             await using var stream = new CompressionStream(fileStream, new CompressionOptions(19));
-            MemoryPackSerializer.Serialize(PipeWriter.Create(stream), sadPandaNameHashes);
+            await MessagePackSerializer.SerializeAsync(stream, sadPandaNameHashes);
         }
         else
         {
-            await using var fileStream = File.OpenRead($@"{dataFolder}\sadPandaNameHashes.mpack.zst");
+            await using var fileStream = File.OpenRead($@"{dataFolder}\sadPandaNameHashes.msgpack.zst");
             await using var stream = new DecompressionStream(fileStream);
-            sadPandaNameHashes = (await MemoryPackSerializer.DeserializeAsync<Dictionary<ulong, SadPandaIdToken>>(stream))!;
+            sadPandaNameHashes = (await MessagePackSerializer.DeserializeAsync<Dictionary<ulong, SadPandaIdToken>>(stream))!;
 
             Console.WriteLine("Loaded sadPandaNameHashes from cache");
         }

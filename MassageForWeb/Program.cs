@@ -3,12 +3,9 @@
 // Mapping of NHentai ID -> SadPanda Gallery ID and Token
 
 using System.IO.Pipelines;
+using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Google.Protobuf;
-using HentaiMapGenLib;
-using MemoryPack;
-using MemoryPack.Streaming;
+using MessagePack;
 using Microsoft.Collections.Extensions;
 using ZstdNet;
 
@@ -21,19 +18,21 @@ var webOutputFolder = $@"{args[1]}";
 {
     Console.WriteLine("Loading BookMaps");
     // BookMap keyed by ID % 1024
-    var maps = new DictionarySlim<ushort, List<Json.Book>>();
+    var maps = new Dictionary<ushort, List<Json.Book>>();
 
-    await using (var fs = File.OpenRead($"{outputFolder}/galleries.mpack"))
+    await using (var fs = File.OpenRead($"{outputFolder}/galleries.msgpack.zst"))
     // await using (var stream = new DecompressionStream(fs))
     {
-        var books = MemoryPackStreamingSerializer.DeserializeAsync<Json.Book>(fs);
+        using var books = new MessagePackStreamReader(fs);
 
-        await foreach (var book in books)
+        await foreach (var bookArr in books.ReadArrayAsync(default))
         {
-            Console.WriteLine(book.Id);
+            var book = MessagePackSerializer.Deserialize<Json.Book>(bookArr);
 
-            ref var r = ref maps.GetOrAddValueRef((ushort)(book!.Id! % 1024));
-            if (r == null) r = [book];
+            // Console.WriteLine(book.Id);
+
+            ref var r = ref CollectionsMarshal.GetValueRefOrAddDefault(maps, (ushort)(book!.Id! % 1024), out var exists);
+            if (!exists) r = [book];
             else r.Add(book);
         }
     }
@@ -51,9 +50,9 @@ var webOutputFolder = $@"{args[1]}";
             bookMap[bookOrError.Id!.Value] = bookOrError;
         }
 
-        await using var fs = File.Create($"{webOutputFolder}/galleries/{key}.mpack.zst");
-        await using var stream = new CompressionStream(File.Create($"{webOutputFolder}/galleries/{key}.mpack.zst"), new CompressionOptions(19));
-        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), bookMap);
+        await using var fs = File.Create($"{webOutputFolder}/galleries/{key}.msgpack.zst");
+        await using var stream = new CompressionStream(fs, new CompressionOptions(19));
+        MessagePackSerializer.Serialize(stream, bookMap);
     }
     Console.WriteLine("Serialized BookMaps");
 }
@@ -69,10 +68,10 @@ GC.Collect(2, GCCollectionMode.Aggressive, true, true);
         nhentaiMapping = JsonSerializer.Deserialize<Dictionary<uint, Json.SadPandaIdToken>>(stream)!;
     }
 
-    await using (var fileStream = File.Create($"{webOutputFolder}/mappings.mpack.zst"))
+    await using (var fileStream = File.Create($"{webOutputFolder}/mappings.msgpack.zst"))
     await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
     {
-        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), nhentaiMapping);
+        MessagePackSerializer.Serialize(stream, nhentaiMapping);
         Console.WriteLine("Serialized NHentaiMapping");
     }
 }
@@ -87,10 +86,10 @@ GC.Collect(2, GCCollectionMode.Aggressive, true, true);
         naGalleries = JsonSerializer.Deserialize<Dictionary<uint, Json.Title>>(stream)!;
     }
 
-    await using (var fileStream = File.Create($"{webOutputFolder}/unmatched.mpack.zst"))
+    await using (var fileStream = File.Create($"{webOutputFolder}/unmatched.msgpack.zst"))
     await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
     {
-        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), naGalleries);
+        MessagePackSerializer.Serialize(stream, naGalleries);
         Console.WriteLine("Serialized UnmatchedGalleries");
     }
 }
@@ -105,10 +104,10 @@ GC.Collect(2, GCCollectionMode.Aggressive, true, true);
         erroredGalleries = JsonSerializer.Deserialize<List<uint>>(stream)!;
     }
 
-    await using (var fileStream = File.Create($"{webOutputFolder}/errored.mpack.zst"))
+    await using (var fileStream = File.Create($"{webOutputFolder}/errored.msgpack.zst"))
     await using (var stream = new CompressionStream(fileStream, new CompressionOptions(19)))
     {
-        MemoryPackSerializer.Serialize(PipeWriter.Create(stream), erroredGalleries);
+        MessagePackSerializer.Serialize(stream, erroredGalleries);
         Console.WriteLine("Serialized ErroredGalleries");
     }
 }

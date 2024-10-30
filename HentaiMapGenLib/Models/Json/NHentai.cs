@@ -4,21 +4,19 @@ using System.Runtime.Serialization;
 using System.Text.Json.Serialization;
 using Google.Protobuf.WellKnownTypes;
 using HentaiMapGen;
-using MemoryPack;
+using MessagePack;
 using Microsoft.Collections.Extensions;
 using Enum = System.Enum;
 using Type = System.Type;
 
 namespace HentaiMapGenLib.Models.Json;
 
-[MemoryPackable]
 [method: JsonConstructor]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-public partial record Title(
-    [property: JsonPropertyName("english")] string? English,
-    [property: JsonPropertyName("japanese")] string? Japanese,
-    [property: JsonPropertyName("pretty")] string? Pretty
+[MessagePackObject]
+public readonly partial record struct Title(
+    [property: Key(0), JsonPropertyName("english")] string? English,
+    [property: Key(1), JsonPropertyName("japanese")] string? Japanese,
+    [property: Key(2), JsonPropertyName("pretty")] string? Pretty
 )
 {
     internal Proto.Title ToProtobuf() => new()
@@ -29,21 +27,19 @@ public partial record Title(
     };
 }
 
-[MemoryPackable]
 [method: JsonConstructor]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-public partial record Book(
-    [property: JsonPropertyName("error")] string? Error,
-    [property: JsonPropertyName("id")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint? Id,
-    [property: JsonPropertyName("media_id")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint? MediaId,
-    [property: JsonPropertyName("title")] Title Title,
-    [property: JsonPropertyName("images")] Images? Images,
-    [property: JsonPropertyName("scanlator")] string? Scanlator,
-    [property: JsonPropertyName("upload_date")] [property: JsonConverter(typeof(UnixDateTimeConverter))] DateTime? UploadDate,
-    [property: JsonPropertyName("tags")] Tag[]? Tags,
-    [property: JsonPropertyName("num_pages")] uint? NumPages,
-    [property: JsonPropertyName("num_favorites")] uint? NumFavorites
+[MessagePackObject]
+public readonly partial record struct Book(
+    [property: Key(0), JsonPropertyName("error")] string? Error,
+    [property: Key(1), JsonPropertyName("id")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint? Id,
+    [property: Key(2), JsonPropertyName("media_id")] [property: JsonConverter(typeof(CastingNumberConverter<uint>))] uint? MediaId,
+    [property: Key(3), JsonPropertyName("title")] Title Title,
+    [property: Key(4), JsonPropertyName("images")] Images? Images,
+    [property: Key(5), JsonPropertyName("scanlator")] string? Scanlator,
+    [property: Key(6), JsonPropertyName("upload_date")] [property: JsonConverter(typeof(UnixDateTimeConverter))] DateTime? UploadDate,
+    [property: Key(7), JsonPropertyName("tags")] Tag[]? Tags,
+    [property: Key(8), JsonPropertyName("num_pages")] uint? NumPages,
+    [property: Key(9), JsonPropertyName("num_favorites")] uint? NumFavorites
 )
 {
     public Proto.BookOrError ToProtobuf(uint idFallback)
@@ -61,7 +57,7 @@ public partial record Book(
         {
             MediaId = MediaId!.Value,
             Title = Title.ToProtobuf(),
-            Images = Images!.ToProtobuf(),
+            Images = Images!.Value.ToProtobuf(),
             Scanlator = Scanlator,
             UploadDate = Timestamp.FromDateTimeOffset(UploadDate!.Value),
             NumPages = NumPages!.Value,
@@ -81,14 +77,12 @@ public partial record Book(
     }
 }
 
-[MemoryPackable]
 [method: JsonConstructor]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-public partial record Page(
-    [property: JsonPropertyName("t")] ImageType Type,
-    [property: JsonPropertyName("w")] uint Width,
-    [property: JsonPropertyName("h")] uint Height
+[MessagePackObject]
+public readonly partial record struct Page(
+    [property: Key(0), JsonPropertyName("t")] ImageType Type,
+    [property: Key(1), JsonPropertyName("w")] uint Width,
+    [property: Key(2), JsonPropertyName("h")] uint Height
 )
 {
     public Proto.Page ToProtobuf() => new()
@@ -156,14 +150,12 @@ public static class ImageTypeHelpers
     }
 }
 
-[MemoryPackable]
 [method: JsonConstructor]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-public partial record Images(
-    [property: JsonPropertyName("pages")] Page[] Pages,
-    [property: JsonPropertyName("cover")] Page Cover,
-    [property: JsonPropertyName("thumbnail")] Page Thumbnail
+[MessagePackObject]
+public readonly partial record struct Images(
+    [property: Key(0), JsonPropertyName("pages")] Page[] Pages,
+    [property: Key(1), JsonPropertyName("cover")] Page Cover,
+    [property: Key(2), JsonPropertyName("thumbnail")] Page Thumbnail
 )
 {
     public Proto.Images ToProtobuf()
@@ -178,16 +170,14 @@ public partial record Images(
     }
 }
 
-[MemoryPackable]
 [method: JsonConstructor]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-public partial record Tag(
-    [property: JsonPropertyName("id")] uint Id,
-    [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("url")] string Url,
-    [property: JsonPropertyName("count")] uint Count
+[MessagePackObject]
+public readonly partial record struct Tag(
+    [property: Key(0), JsonPropertyName("id")] uint Id,
+    [property: Key(1), JsonPropertyName("type")] string Type,
+    [property: Key(2), JsonPropertyName("name")] string Name,
+    [property: Key(3), JsonPropertyName("url")] string Url,
+    [property: Key(4), JsonPropertyName("count")] uint Count
 )
 {
     public Proto.Tag ToProtobuf() => new()

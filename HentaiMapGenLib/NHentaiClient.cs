@@ -96,7 +96,7 @@ public class NHentaiClient : IDisposable
         => GetOriginPictureUrl(book.MediaId!.Value, pageNum);
 
     public virtual string GetBookThumbUrl(Json.Book book)
-        => GetBookThumbUrl(book.MediaId!.Value, ConvertType(book.Images!.Cover.Type));
+        => GetBookThumbUrl(book.MediaId!.Value, ConvertType(book.Images!.Value.Cover.Type));
 
     protected virtual string GetPictureUrl(uint galleryId, int pageNum, string fileType)
         => $"{GetGalleryUrl(galleryId)}/{pageNum}.{fileType}";
@@ -129,7 +129,7 @@ public class NHentaiClient : IDisposable
 
     public virtual Json.Page GetImage(Json.Book book, int pageNum)
     {
-        return book.Images!.Pages[pageNum - 1];
+        return book.Images!.Value.Pages[pageNum - 1];
     }
 
     protected virtual string ConvertType(Json.ImageType type)

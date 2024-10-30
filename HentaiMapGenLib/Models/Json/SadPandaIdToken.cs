@@ -1,21 +1,19 @@
 ﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using MemoryPack;
+using MessagePack;
 
 namespace HentaiMapGenLib.Models.Json;
 
-[MemoryPackable]
-[GenerateTypeScript]
-[method: MemoryPackConstructor]
-[JsonConverter(typeof(SadPandaIdToken.Converter))]
-public partial record SadPandaIdToken(
-    [property: JsonInclude, JsonPropertyName("gid")] uint Gid,
-    [property: JsonIgnore] ulong Token)
+[MessagePackObject]
+[JsonConverter(typeof(Converter))]
+public readonly partial record struct SadPandaIdToken(
+    [property: Key(0), JsonInclude, JsonPropertyName("gid")] uint Gid,
+    [property: Key(1), JsonIgnore] ulong Token)
 {
     public class Converter : JsonConverter<SadPandaIdToken>
     {
-        public override SadPandaIdToken? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        public override SadPandaIdToken Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             if (reader.TokenType != JsonTokenType.StartObject)
             {
@@ -68,7 +66,7 @@ public partial record SadPandaIdToken(
         }
     }
 
-    [JsonInclude, JsonPropertyName("token"), MemoryPackIgnore]
+    [JsonInclude, JsonPropertyName("token"), IgnoreMember]
     public string TokenHex => Token.ToString("x10");
 
     public SadPandaIdToken(long gid, string token)
