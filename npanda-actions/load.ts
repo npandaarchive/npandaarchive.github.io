@@ -9,7 +9,7 @@ let path = process.argv[2];
 let getReleaseResponse;
 try {
     getReleaseResponse = await octokit.rest.repos.listReleases({
-        per_page: 1,
+        per_page: 2,
         // page: 1,
         owner: context.repo.owner,
         repo: context.repo.repo,
