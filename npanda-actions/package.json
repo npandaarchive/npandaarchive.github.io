@@ -1,0 +1,19 @@
+{
+  "name": "npanda-actions",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@actions/github": "^6.0.0"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.8.4"
+  }
+}

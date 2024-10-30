@@ -64,3 +64,8 @@ manga.db
 /Data/sadPandaNameHashes.mpack.zst
 /Data/Output/galleries.msgpack
 /Data/sadPandaNameHashes.msgpack.zst
+/Data_exhentaiapidump/api_dump.sqlite
+/Data_exhentaiapidump/api_dump.sqlite-shm
+/Data_exhentaiapidump/api_dump.sqlite-wal
+/Data_exhentaiapidump/files.txt
+node_modules

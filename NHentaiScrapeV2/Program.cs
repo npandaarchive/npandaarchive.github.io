@@ -16,11 +16,11 @@ var homePageResults = await client.GetHomePageListAsync();
 var maxId = homePageResults.Result.Where(e => e.Id != null).Max(e => e.Id!.Value);
 
 var dataFolder = args[0];
-var outputFolder = $@"{args[0]}\Output";
+var outputFolder = $@"{args[0]}/Output";
 
-using var nhentaiDb = new SQLiteConnection($@"{dataFolder}\manga.db");
+using var nhentaiDb = new SQLiteConnection($@"{dataFolder}/manga.db");
 
-using var newNhentaiDb = new SQLiteConnection($@"{dataFolder}\new_manga.db");
+using var newNhentaiDb = new SQLiteConnection($@"{dataFolder}/new_manga.db");
 
 nhentaiDb.EnableWriteAheadLogging();
 newNhentaiDb.EnableWriteAheadLogging();
@@ -81,22 +81,22 @@ for (uint idx = 1; idx <= maxId; idx++)
             {
                 BookId = nGalleryId,
                 PageNumber = Sqlite.Page.COVER,
-                Type = nGallery.Images!.Cover.Type.GetEnumMemberValue(),
-                Width = nGallery.Images!.Cover.Width,
-                Height = nGallery.Images!.Cover.Height
+                Type = nGallery.Images!.Value.Cover.Type.GetEnumMemberValue(),
+                Width = nGallery.Images!.Value.Cover.Width,
+                Height = nGallery.Images!.Value.Cover.Height
             });
 
             newNhentaiDb.Insert(new Sqlite.Page
             {
                 BookId = nGalleryId,
                 PageNumber = Sqlite.Page.THUMBNAIL,
-                Type = nGallery.Images!.Thumbnail.Type.GetEnumMemberValue(),
-                Width = nGallery.Images!.Thumbnail.Width,
-                Height = nGallery.Images!.Thumbnail.Height
+                Type = nGallery.Images!.Value.Thumbnail.Type.GetEnumMemberValue(),
+                Width = nGallery.Images!.Value.Thumbnail.Width,
+                Height = nGallery.Images!.Value.Thumbnail.Height
             });
 
             var index = 0;
-            foreach (var (imageType, width, height) in nGallery.Images!.Pages)
+            foreach (var (imageType, width, height) in nGallery.Images!.Value.Pages)
             {
                 newNhentaiDb.Insert(new Sqlite.Page
                 {

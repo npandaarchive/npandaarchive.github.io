@@ -12,7 +12,7 @@ using ZstdNet;
 var nHentaiSerializer = Json.NHentaiSerializer.Default;
 
 var dataFolder = args[0];
-var outputFolder = $@"{args[0]}\Output";
+var outputFolder = $@"{args[0]}/Output";
 var webOutputFolder = $@"{args[1]}";
 
 {
@@ -20,7 +20,7 @@ var webOutputFolder = $@"{args[1]}";
     // BookMap keyed by ID % 1024
     var maps = new Dictionary<ushort, List<Json.Book>>();
 
-    await using (var fs = File.OpenRead($"{outputFolder}/galleries.msgpack.zst"))
+    await using (var fs = File.OpenRead($"{outputFolder}/galleries.msgpack"))
     // await using (var stream = new DecompressionStream(fs))
     {
         using var books = new MessagePackStreamReader(fs);

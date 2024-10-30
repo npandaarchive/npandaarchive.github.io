@@ -27,12 +27,12 @@ internal static partial class Program
         var nHentaiSerializer = NHentaiSerializer.Default;
         
         var dataFolder = args[1];
-        var outputFolder = $@"{args[1]}\Output";
+        var outputFolder = $@"{args[1]}/Output";
 
         #region Load deletedGalleries
         
         Dictionary<uint, DeletedGallery> deletedGalleries;
-        await using (var stream = File.OpenRead($@"{dataFolder}\removed_galleries.json"))
+        await using (var stream = File.OpenRead($@"{dataFolder}/removed_galleries.json"))
         {
             deletedGalleries = JsonSerializer.Deserialize(stream, nHentaiSerializer.DeletedGalleryArray)!
                 .ToDictionary(e => e.Id);
@@ -44,7 +44,7 @@ internal static partial class Program
 
         using var sadPandaNameMapping = await SadPandaNameMapping.LoadAsync(args[0], dataFolder);
 
-        using var nhentaiDb = new SQLiteConnection($@"{dataFolder}\manga.db", SQLiteOpenFlags.ReadOnly);
+        using var nhentaiDb = new SQLiteConnection($@"{dataFolder}/manga.db", SQLiteOpenFlags.ReadOnly);
 
         var msgpackTotal = TimeSpan.Zero;
         var mappingTotal = TimeSpan.Zero;
@@ -153,8 +153,8 @@ internal static partial class Program
         Console.WriteLine($"Not found NHentai->Panda mappings: {naGalleries.Count}");
         Console.WriteLine($"Errored (deleted, etc...) NHentai galleries: {erroredGalleries.Count}");
 
-        await using var fileStream = File.Create($@"{outputFolder}\galleries.msgpack.zst");
-        await using var msgpackOutput = new CompressionStream(fileStream, new CompressionOptions(8));
+        await using var fileStream = File.Create($@"{outputFolder}/galleries.msgpack");
+        // await using var msgpackOutput = new CompressionStream(fileStream, new CompressionOptions(8));
         await MessagePackSerializer.SerializeAsync(fileStream, galleries);
 
         await using (var stream = File.Create($"{outputFolder}/nhentaiMapping.json"))
@@ -181,7 +181,7 @@ internal partial class SadPandaNameMapping(SQLiteConnection sqliteConnection, Di
         var pandaDb = new SQLiteConnection(pandaDbLocation, SQLiteOpenFlags.ReadOnly);
 
         Dictionary<ulong, SadPandaIdToken> sadPandaNameHashes;
-        if (!File.Exists($@"{dataFolder}\sadPandaNameHashes.msgpack.zst"))
+        if (!File.Exists($@"{dataFolder}/sadPandaNameHashes.msgpack.zst"))
         {
             sadPandaNameHashes = new Dictionary<ulong, SadPandaIdToken>();
             var sw = Stopwatch.GetTimestamp();
@@ -209,13 +209,13 @@ internal partial class SadPandaNameMapping(SQLiteConnection sqliteConnection, Di
 
             Console.WriteLine($"Created sadPandaNameHashes in {Stopwatch.GetElapsedTime(sw)}. Total {sadPandaNameHashes.Count} sadpanda name hashes.");
 
-            await using var fileStream = File.Create($@"{dataFolder}\sadPandaNameHashes.msgpack.zst");
+            await using var fileStream = File.Create($@"{dataFolder}/sadPandaNameHashes.msgpack.zst");
             await using var stream = new CompressionStream(fileStream, new CompressionOptions(19));
             await MessagePackSerializer.SerializeAsync(stream, sadPandaNameHashes);
         }
         else
         {
-            await using var fileStream = File.OpenRead($@"{dataFolder}\sadPandaNameHashes.msgpack.zst");
+            await using var fileStream = File.OpenRead($@"{dataFolder}/sadPandaNameHashes.msgpack.zst");
             await using var stream = new DecompressionStream(fileStream);
             sadPandaNameHashes = (await MessagePackSerializer.DeserializeAsync<Dictionary<ulong, SadPandaIdToken>>(stream))!;
 

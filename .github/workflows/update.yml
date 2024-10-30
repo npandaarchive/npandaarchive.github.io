@@ -1,0 +1,64 @@
+# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+
+name: Update
+
+on:
+  push:
+    branches: [ "master" ]
+
+  schedule:
+    - cron: 0 0 * * *
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions: write-all
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+    - run: |
+        rootDir=$PWD
+        dataDir=$PWD/Data
+
+        cd "$rootDir/npanda-actions"
+        pnpm install
+        cd "$rootDir"
+
+        mkdir "$dataDir"
+        mkdir "$dataDir/Output"
+
+        exhentaiApiDumpDir=$PWD/exhentai
+
+        # download api dump
+        wget https://github.com/npandaarchive/temp/releases/download/t/apidump.tzst -O apidump.tzst
+        mkdir "$exhentaiApiDumpDir"
+        /usr/bin/tar -xf apidump.tzst -P -C "$exhentaiApiDumpDir" --use-compress-program unzstd
+        rm -rf apidump.tzst
+
+        # restore
+        pnpx tsx ./npanda-actions/load.ts data.tzst
+        /usr/bin/tar -xf data.tzst -P -C "$rootDir" --use-compress-program unzstd
+        rm -rf data.tzst
+
+        dotnet run NHentaiScrapeV2 "$dataDir"
+        dotnet run HentaiMapGen "$exhentaiApiDumpDir/api_dump.sqlite" "$dataDir"
+        dotnet run MassageForWeb "$dataDir" "$rootDir/npanda/static/data"
+
+        # save
+        /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$rootDir" "Data" --use-compress-program zstdmt
+        pnpx tsx ./npanda-actions/save.ts data.tzst
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
