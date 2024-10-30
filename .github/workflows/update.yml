@@ -53,9 +53,9 @@ jobs:
         /usr/bin/tar -xf data.tzst -P -C "$rootDir" --use-compress-program "unzstd --long=30"
         rm -rf data.tzst
 
-        dotnet run NHentaiScrapeV2 "$dataDir"
-        dotnet run HentaiMapGen "$exhentaiApiDumpDir/api_dump.sqlite" "$dataDir"
-        dotnet run MassageForWeb "$dataDir" "$rootDir/npanda/static/data"
+        dotnet run --project ./NHentaiScrapeV2/NHentaiScrapeV2.csproj --configuration Release -- "$dataDir"
+        dotnet run --project ./HentaiMapGen/HentaiMapGen.csproj --configuration Release -- "$exhentaiApiDumpDir/api_dump.sqlite" "$dataDir"
+        dotnet run --project ./MassageForWeb/MassageForWeb.csproj --configuration Release -- "$dataDir" "$rootDir/npanda/static/data"
 
         # save
         /usr/bin/tar --posix -cf data.tzst --exclude data.tzst -P -C "$rootDir" "Data" --use-compress-program "zstdmt --long=30"
