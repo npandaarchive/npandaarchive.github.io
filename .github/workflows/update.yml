@@ -58,8 +58,6 @@ jobs:
         mkdir "$EXHENTAI_API_DUMP_DIR"
         /usr/bin/tar -xf apidump.tzst -P -C "$EXHENTAI_API_DUMP_DIR" --use-compress-program "unzstd --long=30"
         rm -rf apidump.tzst
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
 
     - name: restore data.tzst
       run: |
@@ -67,6 +65,8 @@ jobs:
         pnpx tsx ./npanda-actions/load.ts data.tzst
         /usr/bin/tar -xf data.tzst -P -C "$ROOT_DIR" --use-compress-program "unzstd --long=30"
         rm -rf data.tzst
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
 
     - name: run NHentaiScrapeV2
       run: |
