@@ -137,3 +137,5 @@ jobs:
         pnpx tsx ./npanda-actions/dispatch-action.ts svelte.yml
       env:
         GITHUB_TOKEN: ${{ github.token }}
+
+    - uses: gautamkrishnar/keepalive-workflow@v2
