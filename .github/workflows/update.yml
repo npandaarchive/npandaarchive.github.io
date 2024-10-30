@@ -30,8 +30,8 @@ jobs:
         version: 9
 
     - run: |
-        rootDir=$PWD
-        dataDir=$PWD/Data
+        rootDir="$(pwd)"
+        dataDir="$rootDir/Data"
 
         cd "$rootDir/npanda-actions"
         pnpm install
@@ -40,7 +40,7 @@ jobs:
         mkdir "$dataDir"
         mkdir "$dataDir/Output"
 
-        exhentaiApiDumpDir=$PWD/exhentai
+        exhentaiApiDumpDir="$rootDir/exhentai"
 
         # download api dump
         wget https://github.com/npandaarchive/temp/releases/download/t/apidump.tzst -O apidump.tzst

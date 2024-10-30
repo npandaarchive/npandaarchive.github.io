@@ -69,3 +69,4 @@ manga.db
 /Data_exhentaiapidump/api_dump.sqlite-wal
 /Data_exhentaiapidump/files.txt
 node_modules
+/data.tzst

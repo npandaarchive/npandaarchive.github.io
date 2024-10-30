@@ -32,7 +32,7 @@ if (!downloadUrl) {
 
 const buf = await fetch(downloadUrl).then(e => e.ok ? e.arrayBuffer() : undefined);
 if (buf) {
-    fs.writeFile(path, Buffer.from(buf));
+    await fs.writeFile(path, Buffer.from(buf));
     console.log(`downloaded database from ${getReleaseResponse.data[0].name}}`);
 } else {
     console.log('not ok');

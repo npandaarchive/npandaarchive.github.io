@@ -11,8 +11,8 @@ const date = new Date();
 const createReleaseResponse = await octokit.rest.repos.createRelease({
     owner: context.repo.owner,
     repo: context.repo.repo,
-    tag_name: 'database-' + date.toISOString().replace(/:/g, '-'),
-    name: `Persisting database at ${date.toUTCString()}`,
+    tag_name: 'data-' + date.toISOString().replace(/:/g, '-'),
+    name: `Persisting data at ${date.toUTCString()}`,
     draft: false,
     prerelease: true
 });
