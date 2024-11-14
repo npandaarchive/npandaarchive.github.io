@@ -110,7 +110,8 @@ public enum ImageType : byte
     [EnumMember(Value = "g")] Gif,
     [EnumMember(Value = "0")] Invalid1,
     [EnumMember(Value = "1")] Invalid2,
-    [EnumMember(Value = "2")] Invalid3
+    [EnumMember(Value = "2")] Invalid3,
+    [EnumMember(Value = "w")] WebP,
 }
 
 public static class ImageTypeHelpers
