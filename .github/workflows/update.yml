@@ -46,6 +46,14 @@ jobs:
         pnpm install
         cd "$ROOT_DIR"
 
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install sqlite-utils
+      run: |
+        pip install sqlite-utils
+
     - name: make dirs
       run: |
         mkdir "$DATA_DIR"
@@ -79,6 +87,14 @@ jobs:
     - name: run MassageForWeb
       run: |
         dotnet run --project ./MassageForWeb/MassageForWeb.csproj --configuration Release -- "$DATA_DIR" "$ROOT_DIR/npanda/static/data"
+
+    - name: Vacuum manga.db
+      run: |
+        sqlite-utils vacuum "$DATA_DIR/manga.db"
+
+    - name: Vacuum new_manga.db
+      run: |
+        sqlite-utils vacuum "$DATA_DIR/new_manga.db"
 
     - name: save data.tzst
       run: |
